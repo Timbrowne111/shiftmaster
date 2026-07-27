@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
+import { dbGet, dbSet, authLogin, authCreateUser, authSendReset, authChangePassword, authLogout } from './firebase.js';
 
 // ── Constants ──────────────────────────────────────────────────────────
 const DAYS=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],DAYS_F=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
@@ -33,8 +34,7 @@ function calcPay(staff,hrs){const rate=Number(staff.hourlyRate)||13.68,h=Number(
 // ── Recommendations ────────────────────────────────────────────────────
 function genRecs(staffList,asgn,depts,fc,segs){try{const allD=depts.flatMap(d=>d.outlets.flatMap(o=>o.shifts)),sH={};staffList.forEach(s=>{let h=0;asgn.filter(a=>a.staffId===s.id).forEach(a=>{const d=allD.find(x=>x.id===a.shiftId);if(d)h+=sDur(d.startTime,d.endTime);});sH[s.id]=h;});const ft=staffList.filter(s=>s.contractType==="fulltime"),pt=staffList.filter(s=>s.contractType==="parttime"),ex=staffList.filter(s=>s.contractType==="extra");const uFT=ft.filter(s=>(sH[s.id]||0)<(s.contractHours||38)-2);const swaps=[];asgn.forEach(a=>{const st=staffList.find(s=>s.id===a.staffId);if(!st||st.contractType==="fulltime")return;const sd=allD.find(d=>d.id===a.shiftId);if(!sd)return;const shH=sDur(sd.startTime,sd.endTime);const cands=ft.filter(f=>{if(f.outletId!==st.outletId)return false;if((sH[f.id]||0)+shH>(f.contractHours||38)+2)return false;if(asgn.some(x=>x.staffId===f.id&&x.shiftId===a.shiftId&&x.dayIndex===a.dayIndex))return false;return true;});if(cands.length)swaps.push({currentStaff:st,shift:sd,dayIndex:a.dayIndex,assignmentId:a.id,candidates:cands.map(f=>({...f,currentHours:sH[f.id]||0,remainingCapacity:(f.contractHours||38)-(sH[f.id]||0)}))});});const tFTS=ft.reduce((s,x)=>s+(sH[x.id]||0),0),tPTS=pt.reduce((s,x)=>s+(sH[x.id]||0),0),tEXS=ex.reduce((s,x)=>s+(sH[x.id]||0),0),tS=tFTS+tPTS+tEXS;return {underutilizedFT:uFT,swapSuggestions:swaps,uncoveredFTSuggestions:[],overstaffed:[],utilization:{fulltime:ft.map(s=>({...s,scheduled:sH[s.id]||0,contract:s.contractHours||38,pct:Math.round(((sH[s.id]||0)/(s.contractHours||38))*100)})),parttime:pt.map(s=>({...s,scheduled:sH[s.id]||0,contract:s.contractHours||24,pct:s.contractHours?Math.round(((sH[s.id]||0)/s.contractHours)*100):0})),extra:ex.map(s=>({...s,scheduled:sH[s.id]||0}))},summary:{totalFTCapacity:ft.reduce((s,x)=>s+(x.contractHours||38),0),totalFTScheduled:tFTS,totalPTScheduled:tPTS,totalExScheduled:tEXS,totalScheduled:tS,ftRatio:tS>0?Math.round(tFTS/tS*100):0},staffHours:sH};}catch(e){return {underutilizedFT:[],swapSuggestions:[],uncoveredFTSuggestions:[],overstaffed:[],utilization:{fulltime:[],parttime:[],extra:[]},summary:{totalFTCapacity:0,totalFTScheduled:0,totalPTScheduled:0,totalExScheduled:0,totalScheduled:0,ftRatio:0},staffHours:{}};}}
 
-// ── PERSISTENT STORAGE (Firebase Firestore) ──────────────────────────
-import { dbGet, dbSet } from './firebase.js';
+// ── Storage imported from firebase.js ──
 
 // ══════════════════════════════════════════════════════════════════════
 // ── TEST HOTEL DEMO DATA ─────────────────────────────────────────────
@@ -176,20 +176,53 @@ export default function App(){
     let sys=await dbGet("system");
     if(!sys){
       const testHotel=buildTestHotel();
-      sys={admins:[{id:"adm-1",name:"System Admin",email:"admin@shiftmaster.com",password:"admin123"}],hotels:[{id:"test",name:"Test Hotel"}]};
+      sys={admins:[{id:"adm-1",name:"Tim Browne",email:"browne.t@buas.nl",password:"admin123"}],hotels:[{id:"test",name:"Test Hotel"}]};
       await dbSet("system",sys);
       await dbSet("hotel:test",testHotel);
+      // Register auth accounts for users with email
+      await authCreateUser("browne.t@buas.nl","admin123");
+      await authCreateUser("sarah@test.com","manager1");
+      await authCreateUser("jan@test.com","manager1");
+      // Register staff with email
+      for(const s of testHotel.staff){if(s.email)await authCreateUser(s.email,"welcome1");}
+    }
+    // Always ensure test hotel exists in system list
+    if(!sys.hotels.find(h=>h.id==="test")){
+      sys.hotels.push({id:"test",name:"Test Hotel"});
+      await dbSet("system",sys);
+    }
+    // Always ensure test hotel DATA exists in Firestore
+    let testData=await dbGet("hotel:test");
+    if(!testData){
+      const testHotel=buildTestHotel();
+      await dbSet("hotel:test",testHotel);
+      await authCreateUser("sarah@test.com","manager1");
+      await authCreateUser("jan@test.com","manager1");
+      for(const s of testHotel.staff){if(s.email)await authCreateUser(s.email,"welcome1");}
+      testData=testHotel;
     }
     setSystem(sys);
     const hd={};
-    for(const h of sys.hotels){const d=await dbGet("hotel:"+h.id);if(d)hd[h.id]=d;}
+    for(const hMeta of sys.hotels){
+      const d=await dbGet("hotel:"+hMeta.id);
+      if(d){
+        hd[hMeta.id]=d;
+      }
+    }
+    // Ensure test hotel is always in loaded data
+    if(!hd["test"]&&testData) hd["test"]=testData;
     setHotelData(hd);
     setLoading(false);
   })();},[]);
 
   // ── Save helpers ──
   const saveSystem=useCallback(async(s)=>{setSystem(s);await dbSet("system",s);},[]);
-  const saveHotel=useCallback(async(hid,data)=>{setHotelData(prev=>({...prev,[hid]:data}));await dbSet("hotel:"+hid,data);},[]);
+  const saveHotel=useCallback(async(hid,data)=>{
+    // Track last activity
+    const withTimestamp={...data,lastActivity:new Date().toISOString()};
+    setHotelData(prev=>({...prev,[hid]:withTimestamp}));
+    await dbSet("hotel:"+hid,withTimestamp);
+  },[]);
 
   // ── Current hotel data ──
   const h=curHotel?hotelData[curHotel]:null;
@@ -207,35 +240,72 @@ export default function App(){
   const upOut=(did,u)=>upH("departments",h.departments.map(d=>d.id===did?{...d,outlets:d.outlets.map(o=>o.id===u.id?u:o)}:d));
   const setAsgn=(v)=>upH("assignments",v);
 
-  // ── Login handler ──
-  const handleLogin=(email,pw)=>{
-    if(!system)return "System loading...";
+  // ── Login handler (async — Firebase Auth + Firestore fallback) ──
+  const[loginErr,setLoginErr]=useState("");
+  const[loginLoading,setLoginLoading]=useState(false);
+
+  const handleLogin=async(email,pw)=>{
+    if(!system){setLoginErr("System loading...");return;}
+    setLoginLoading(true);setLoginErr("");
     const e=email.toLowerCase().trim();
-    // Admin
-    const adm=system.admins.find(a=>a.email.toLowerCase()===e&&a.password===pw);
-    if(adm){setUser({role:"admin",name:adm.name,email:adm.email,id:adm.id});return null;}
-    // Hotel manager
-    for(const hMeta of system.hotels){const hd=hotelData[hMeta.id];if(!hd)continue;
-      if(hd.hotelManager?.email?.toLowerCase()===e&&hd.hotelManager?.password===pw){setUser({role:"hotelManager",name:hd.hotelManager.name,email:hd.hotelManager.email,hotelId:hMeta.id});setCurHotel(hMeta.id);const fd=hd.departments[0];if(fd){setSelDept(fd.id);setSelOut(fd.outlets[0]?.id||"");}return null;}}
-    // Dept manager
-    for(const hMeta of system.hotels){const hd=hotelData[hMeta.id];if(!hd?.deptManagers)continue;
-      const dm=hd.deptManagers.find(m=>m.email?.toLowerCase()===e&&m.password===pw);
-      if(dm){setUser({role:"deptManager",name:dm.name,email:dm.email,hotelId:hMeta.id,deptIds:dm.deptIds||[]});setCurHotel(hMeta.id);const fd=hd.departments.find(d=>(dm.deptIds||[]).includes(d.id));if(fd){setSelDept(fd.id);setSelOut(fd.outlets[0]?.id||"");}return null;}}
-    // Staff (shared login per hotel)
+
+    // Try Firebase Auth first (for accounts with email)
+    if(e.includes("@")){
+      const authResult=await authLogin(e,pw);
+      if(authResult.ok){
+        const found=findRoleByEmail(e);
+        if(found){applyRole(found);setLoginLoading(false);return;}
+        setLoginErr("Account exists but no role assigned.");setLoginLoading(false);return;
+      }
+    }
+
+    // Firestore fallback (for staff without email — login with name/username)
+    for(const hMeta of system.hotels){const hd=hotelData[hMeta.id];if(!hd?.staff)continue;
+      const st=hd.staff.find(s=>((s.username||s.name||"").toLowerCase()===e)&&s.password===pw);
+      if(st){setUser({role:"staff",name:st.name,email:st.email||"",hotelId:hMeta.id,staffId:st.id});setCurHotel(hMeta.id);setStaffPick(st);setLoginLoading(false);return;}}
+    // Also check shared staff login as fallback
     for(const hMeta of system.hotels){const hd=hotelData[hMeta.id];if(!hd?.staffLogin)continue;
-      if(hd.staffLogin.username.toLowerCase()===e&&hd.staffLogin.password===pw){setUser({role:"staff",name:"Staff",hotelId:hMeta.id});setCurHotel(hMeta.id);return null;}}
-    return "Invalid email or password";
+      if((hd.staffLogin.username||"").toLowerCase()===e&&hd.staffLogin.password===pw){setUser({role:"staff",name:"Staff",hotelId:hMeta.id});setCurHotel(hMeta.id);setLoginLoading(false);return;}}
+
+    setLoginErr("Invalid email or password");setLoginLoading(false);
   };
 
-  const handleForgot=(email)=>{
+  // ── Role lookup by email ──
+  const findRoleByEmail=(e)=>{
+    const adm=system.admins.find(a=>(a.email||"").toLowerCase()===e);
+    if(adm)return {role:"admin",name:adm.name,email:adm.email,id:adm.id};
+    for(const hMeta of system.hotels){const hd=hotelData[hMeta.id];if(!hd)continue;
+      if((hd.hotelManager?.email||"").toLowerCase()===e)return {role:"hotelManager",name:hd.hotelManager.name,email:hd.hotelManager.email,hotelId:hMeta.id,hd};}
+    for(const hMeta of system.hotels){const hd=hotelData[hMeta.id];if(!hd?.deptManagers)continue;
+      const dm=hd.deptManagers.find(m=>(m.email||"").toLowerCase()===e);
+      if(dm)return {role:"deptManager",name:dm.name,email:dm.email,hotelId:hMeta.id,deptIds:dm.deptIds||[],hd};}
+    for(const hMeta of system.hotels){const hd=hotelData[hMeta.id];if(!hd?.staff)continue;
+      const st=hd.staff.find(s=>(s.email||"").toLowerCase()===e);
+      if(st)return {role:"staff",name:st.name,email:st.email,hotelId:hMeta.id,staffId:st.id,staff:st};}
+    return null;
+  };
+
+  const applyRole=(found)=>{
+    setUser({role:found.role,name:found.name,email:found.email,id:found.id,hotelId:found.hotelId,deptIds:found.deptIds,staffId:found.staffId});
+    if(found.hotelId){
+      setCurHotel(found.hotelId);
+      if(found.hd)dbSet("hotel:"+found.hotelId,{...found.hd,lastLogin:new Date().toISOString()});
+      const hd=found.hd||hotelData[found.hotelId];
+      if(hd){const fd=found.deptIds?hd.departments.find(d=>found.deptIds.includes(d.id)):hd.departments[0];if(fd){setSelDept(fd.id);setSelOut(fd.outlets?.[0]?.id||"");}}
+      if(found.staff)setStaffPick(found.staff);
+    }
+  };
+
+  const handleForgot=async(email)=>{
     const e=email.toLowerCase().trim();
-    if(!system)return "System loading";
-    const all=[...system.admins];
-    Object.values(hotelData).forEach(hd=>{if(hd.hotelManager?.email)all.push(hd.hotelManager);(hd.deptManagers||[]).forEach(m=>{if(m.email)all.push(m);});(hd.staff||[]).forEach(s=>{if(s.email)all.push(s);});});
-    return all.find(u=>u.email?.toLowerCase()===e)?null:"User not found. No account matches this email.";
+    if(!e.includes("@"))return "Please enter an email address";
+    const result=await authSendReset(e);
+    if(result.ok)return null; // success
+    if(result.code==="auth/user-not-found")return "No account found with this email address.";
+    return "Error: "+result.code;
   };
 
-  const logout=()=>{setUser(null);setCurHotel(null);setView("schedule");setPm(null);setStaffPick(null);};
+  const logout=async()=>{await authLogout();setUser(null);setCurHotel(null);setView("schedule");setPm(null);setStaffPick(null);setLoginErr("");};
 
   // ── Loading ──
   if(loading)return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:`linear-gradient(135deg,${P.navy},${P.navyM})`}}><div style={{textAlign:"center",color:P.cream}}><div style={{fontSize:48}}>🏨</div><h1 style={{fontFamily:"'Georgia',serif",color:P.acc}}>ShiftMaster</h1><p>Loading...</p></div></div>;
@@ -244,15 +314,24 @@ export default function App(){
   // ── LOGIN SCREEN ───────────────────────────────────────────────────
   // ══════════════════════════════════════════════════════════════════
   if(!user){
-    return <LoginScreen onLogin={handleLogin} onForgot={handleForgot}/>;
+    return <LoginScreen onLogin={handleLogin} onForgot={handleForgot} loginErr={loginErr} loginLoading={loginLoading}/>;
   }
 
   // ══════════════════════════════════════════════════════════════════
   // ── ADMIN VIEW ─────────────────────────────────────────────────────
   // ══════════════════════════════════════════════════════════════════
   if(user.role==="admin"&&!curHotel){
-    return <AdminView system={system} saveSystem={saveSystem} hotelData={hotelData} saveHotel={saveHotel} logout={logout} onEnterHotel={(hid)=>{
-      setCurHotel(hid);const hd=hotelData[hid];if(hd){const fd=hd.departments[0];if(fd){setSelDept(fd.id);setSelOut(fd.outlets[0]?.id||"");}}
+    return <AdminView system={system} saveSystem={saveSystem} hotelData={hotelData} saveHotel={saveHotel} logout={logout} onEnterHotel={async(hid)=>{
+      // Ensure hotel data is loaded
+      let hd=hotelData[hid];
+      if(!hd){hd=await dbGet("hotel:"+hid);if(hd){setHotelData(prev=>({...prev,[hid]:hd}));}}
+      if(!hd){alert("Hotel data not found in database.");return;}
+      // Track last login
+      const updated={...hd,lastLogin:new Date().toISOString()};
+      await dbSet("hotel:"+hid,updated);
+      setHotelData(prev=>({...prev,[hid]:updated}));
+      setCurHotel(hid);
+      const fd=hd.departments?.[0];if(fd){setSelDept(fd.id);setSelOut(fd.outlets?.[0]?.id||"");}
     }}/>;
   }
   // Admin inside a hotel — treat as hotel manager but with back button
@@ -393,7 +472,7 @@ export default function App(){
         {/* STAFF */}
         {view==="staff"&&<div style={S.card}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><h3 style={{margin:0,color:P.navy}}>👥 Staff</h3>
-            <button style={S.addBtn} onClick={()=>{const nm=prompt("Staff name:");if(!nm?.trim())return;const em=prompt("Email (optional):")||"";const oid=prompt("Outlet ID (e.g. fo-desk, fb-rest):")||"";upH("staff",[...h.staff,{id:gid(),name:nm.trim(),email:em,outletId:oid,contractType:"fulltime",contractHours:38,hourlyRate:13.68}]);}}>+ Add</button></div>
+            <button style={S.addBtn} onClick={async()=>{const nm=prompt("Staff name:");if(!nm?.trim())return;const em=prompt("Email (optional, for password reset):")||"";const pw=prompt("Password:")||"welcome1";const oid=prompt("Outlet ID (e.g. fo-desk, fb-rest):")||"";if(em)await authCreateUser(em,pw);upH("staff",[...h.staff,{id:gid(),name:nm.trim(),email:em,password:pw,outletId:oid,contractType:"fulltime",contractHours:38,hourlyRate:13.68}]);}}>+ Add</button></div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:8}}>
             {(user.deptIds?h.staff.filter(s=>{const o=h.departments.flatMap(d=>d.outlets).find(o2=>o2.id===s.outletId);return o&&user.deptIds.includes(h.departments.find(d=>d.outlets.some(o3=>o3.id===o.id))?.id);}):h.staff).map(s=>{const o=h.departments.flatMap(d=>d.outlets.map(o2=>({...o2,deptName:d.name}))).find(x=>x.id===s.outletId);return (
               <div key={s.id} style={S.staffCard}><div style={{flex:1}}><div style={{display:"flex",alignItems:"center",gap:6}}><SBadge type={s.contractType}/><strong style={{color:P.navy}}>{s.name}</strong></div>
@@ -410,20 +489,38 @@ export default function App(){
             <h4 style={{color:P.navy,margin:"0 0 8px"}}>👔 Hotel Manager</h4>
             <div style={S.profRow}><span style={S.profL}>Name</span><span>{h.hotelManager?.name||"—"}</span></div>
             <div style={S.profRow}><span style={S.profL}>Email</span><span>{h.hotelManager?.email||"—"}</span></div>
+            {h.hotelManager?.email&&<button style={{...S.addBtn,background:P.bluL,color:P.blu,marginTop:6,fontSize:11}} onClick={async()=>{const r=await authSendReset(h.hotelManager.email);alert(r.ok?"Reset email sent!":"Error: "+r.code);}}>Send Password Reset Email</button>}
           </div>
           <div style={{marginBottom:20}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><h4 style={{color:P.navy,margin:0}}>📋 Department Managers</h4>
-              <button style={S.addBtn} onClick={()=>{const nm=prompt("Name:");const em=prompt("Email:");const pw=prompt("Password:");const dids=prompt("Department IDs (comma-sep, e.g. fo,fb):");if(!nm||!em||!pw)return;upH("deptManagers",[...(h.deptManagers||[]),{id:gid(),name:nm,email:em,password:pw,deptIds:(dids||"").split(",").map(x=>x.trim())}]);}}>+ Add</button></div>
+              <button style={S.addBtn} onClick={async()=>{const nm=prompt("Name:");const em=prompt("Email:");const pw=prompt("Password:");const dids=prompt("Department IDs (comma-sep, e.g. fo,fb):");if(!nm||!pw)return;if(em)await authCreateUser(em,pw);upH("deptManagers",[...(h.deptManagers||[]),{id:gid(),name:nm,email:em||"",password:pw,deptIds:(dids||"").split(",").map(x=>x.trim())}]);}}>+ Add</button></div>
             {(h.deptManagers||[]).map(dm=> <div key={dm.id} style={{...S.profRow,marginBottom:4}}>
-              <span><strong>{dm.name}</strong> ({dm.email}) — Depts: {(dm.deptIds||[]).join(", ")}</span>
-              <button style={S.delBtn} onClick={()=>upH("deptManagers",(h.deptManagers||[]).filter(x=>x.id!==dm.id))}>✕</button>
+              <span><strong>{dm.name}</strong> {dm.email&&`(${dm.email})`} — Depts: {(dm.deptIds||[]).join(", ")}</span>
+              <div style={{display:"flex",gap:4}}>
+                {dm.email&&<button style={{...S.addBtn,background:P.bluL,color:P.blu,fontSize:10,padding:"3px 8px"}} onClick={async()=>{const r=await authSendReset(dm.email);alert(r.ok?"Reset email sent!":"Error: "+r.code);}}>Reset</button>}
+                {!dm.email&&<button style={{...S.addBtn,background:P.orgL,color:P.org,fontSize:10,padding:"3px 8px"}} onClick={()=>{const np=prompt("New password for "+dm.name+":");if(np)upH("deptManagers",(h.deptManagers||[]).map(x=>x.id===dm.id?{...x,password:np}:x));}}>Set Password</button>}
+                <button style={S.delBtn} onClick={()=>upH("deptManagers",(h.deptManagers||[]).filter(x=>x.id!==dm.id))}>✕</button>
+              </div>
             </div>)}
           </div>
+          <div style={{marginBottom:20}}>
+            <h4 style={{color:P.navy,margin:"0 0 8px"}}>👤 Staff Accounts</h4>
+            <p style={{fontSize:12,color:P.gry,margin:"0 0 8px"}}>Staff with email → password reset via email. Without email → manual password reset by manager.</p>
+            <div style={{display:"grid",gap:4,maxHeight:400,overflowY:"auto"}}>
+              {h.staff.map(s=> <div key={s.id} style={{...S.profRow,padding:"8px 12px"}}>
+                <span style={{fontSize:13}}><strong>{s.name}</strong> {s.email?<span style={{color:P.blu,fontSize:11}}>({s.email})</span>:<span style={{color:P.gry,fontSize:11}}>(no email)</span>}</span>
+                <div style={{display:"flex",gap:4}}>
+                  {s.email&&<button style={{...S.addBtn,background:P.bluL,color:P.blu,fontSize:10,padding:"3px 8px"}} onClick={async()=>{const r=await authSendReset(s.email);alert(r.ok?"Reset email sent to "+s.email:"Error: "+r.code);}}>Email Reset</button>}
+                  <button style={{...S.addBtn,background:P.orgL,color:P.org,fontSize:10,padding:"3px 8px"}} onClick={()=>{const np=prompt("New password for "+s.name+":");if(!np)return;upH("staff",h.staff.map(x=>x.id===s.id?{...x,password:np}:x));alert("Password updated for "+s.name);}}>Set Password</button>
+                </div>
+              </div>)}
+            </div>
+          </div>
           <div>
-            <h4 style={{color:P.navy,margin:"0 0 8px"}}>👤 Staff Login (shared)</h4>
+            <h4 style={{color:P.navy,margin:"0 0 8px"}}>🔗 Shared Staff Login (legacy)</h4>
             <div style={S.profRow}><span style={S.profL}>Username</span><span>{h.staffLogin?.username||"—"}</span></div>
             <div style={S.profRow}><span style={S.profL}>Password</span><span>{h.staffLogin?.password||"—"}</span></div>
-            <button style={{...S.addBtn,marginTop:8}} onClick={()=>{const u=prompt("Staff username:",h.staffLogin?.username||"staff");const p=prompt("Staff password:",h.staffLogin?.password||"");if(u&&p)upH("staffLogin",{username:u,password:p});}}>Edit Staff Login</button>
+            <button style={{...S.addBtn,marginTop:8}} onClick={()=>{const u=prompt("Staff username:",h.staffLogin?.username||"staff");const p=prompt("Staff password:",h.staffLogin?.password||"");if(u&&p)upH("staffLogin",{username:u,password:p});}}>Edit Shared Login</button>
           </div>
         </div>}
       </main>
@@ -434,27 +531,28 @@ export default function App(){
 // ══════════════════════════════════════════════════════════════════════
 // ── LOGIN SCREEN ─────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════
-function LoginScreen({onLogin,onForgot}){
-  const[email,setEmail]=useState(""),[pw,setPw]=useState(""),[err,setErr]=useState(""),[msg,setMsg]=useState(""),[forgot,setForgot]=useState(false),[fEmail,setFEmail]=useState("");
-  const submit=()=>{const e=onLogin(email,pw);if(e)setErr(e);};
-  const doForgot=()=>{if(!fEmail.trim()){setErr("Enter your email");return;}const e=onForgot(fEmail);if(e){setErr(e);setMsg("");}else{setMsg("Password reset link sent to "+fEmail);setErr("");}};
+function LoginScreen({onLogin,onForgot,loginErr,loginLoading}){
+  const[email,setEmail]=useState(""),[pw,setPw]=useState(""),[msg,setMsg]=useState(""),[forgot,setForgot]=useState(false),[fEmail,setFEmail]=useState(""),[fErr,setFErr]=useState(""),[fLoading,setFLoading]=useState(false);
+  const submit=()=>{if(!email.trim()||!pw.trim())return;onLogin(email,pw);};
+  const doForgot=async()=>{if(!fEmail.trim())return;setFLoading(true);setFErr("");setMsg("");const e=await onForgot(fEmail);setFLoading(false);if(e){setFErr(e);setMsg("");}else{setMsg("Password reset email sent to "+fEmail+". Check your inbox (and spam folder).");setFErr("");}};
   if(forgot)return (
     <div style={S.loginCont}><div style={S.loginCard}>
       <div style={{textAlign:"center",marginBottom:16}}><span style={{fontSize:46}}>🏨</span><h1 style={S.loginTitle}>ShiftMaster</h1><p style={S.loginSub}>Reset your password</p></div>
-      <input style={S.input} placeholder="Email address" type="email" value={fEmail} onChange={e=>{setFEmail(e.target.value);setErr("");setMsg("");}} onKeyDown={e=>e.key==="Enter"&&doForgot()} autoFocus/>
-      {err&&<p style={{color:P.red,fontSize:13,margin:0}}>{err}</p>}
+      <p style={{fontSize:13,color:P.gryD,textAlign:"center",margin:"0 0 8px",lineHeight:1.5}}>Enter your email address and we'll send you a reset link.</p>
+      <input style={S.input} placeholder="Email address" type="email" value={fEmail} onChange={e=>{setFEmail(e.target.value);setFErr("");setMsg("");}} onKeyDown={e=>e.key==="Enter"&&doForgot()} autoFocus/>
+      {fErr&&<p style={{color:P.red,fontSize:13,margin:0}}>{fErr}</p>}
       {msg&&<div style={{padding:12,borderRadius:10,background:P.grnL,fontSize:13,color:P.grn,textAlign:"center"}}>{msg}</div>}
-      <button style={S.primBtn} onClick={doForgot}>Send Reset Link</button>
-      <button style={S.linkBtn} onClick={()=>{setForgot(false);setErr("");setMsg("");}}>← Back to Sign In</button>
+      <button style={{...S.primBtn,opacity:fLoading?.5:1}} onClick={doForgot} disabled={fLoading}>{fLoading?"Sending...":"Send Reset Link"}</button>
+      <button style={S.linkBtn} onClick={()=>{setForgot(false);setFErr("");setMsg("");}}>← Back to Sign In</button>
     </div></div>
   );
   return (
     <div style={S.loginCont}><div style={S.loginCard}>
       <div style={{textAlign:"center",marginBottom:16}}><span style={{fontSize:46}}>🏨</span><h1 style={S.loginTitle}>ShiftMaster</h1><p style={S.loginSub}>Your schedule; our solution</p></div>
-      <input style={S.input} placeholder="Email / Username" value={email} onChange={e=>{setEmail(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&submit()}/>
-      <input style={S.input} placeholder="Password" type="password" value={pw} onChange={e=>{setPw(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&submit()}/>
-      {err&&<p style={{color:P.red,fontSize:13,margin:0}}>{err}</p>}
-      <button style={S.primBtn} onClick={submit}>Sign In</button>
+      <input style={S.input} placeholder="Email or username" value={email} onChange={e=>{setEmail(e.target.value);}} onKeyDown={e=>e.key==="Enter"&&submit()}/>
+      <input style={S.input} placeholder="Password" type="password" value={pw} onChange={e=>{setPw(e.target.value);}} onKeyDown={e=>e.key==="Enter"&&submit()}/>
+      {loginErr&&<p style={{color:P.red,fontSize:13,margin:0}}>{loginErr}</p>}
+      <button style={{...S.primBtn,opacity:loginLoading?.5:1}} onClick={submit} disabled={loginLoading}>{loginLoading?"Signing in...":"Sign In"}</button>
       <button style={S.linkBtn} onClick={()=>{setForgot(true);setFEmail(email);}}>Forgot password?</button>
     </div></div>
   );
@@ -465,35 +563,97 @@ function LoginScreen({onLogin,onForgot}){
 // ══════════════════════════════════════════════════════════════════════
 function AdminView({system,saveSystem,hotelData,saveHotel,logout,onEnterHotel}){
   const[tab,setTab]=useState("hotels");
-  const addHotel=()=>{const nm=prompt("Hotel name:");if(!nm?.trim())return;const id=gid();const em=prompt("Hotel manager email:");const pw=prompt("Hotel manager password:");const mgNm=prompt("Hotel manager name:")||"Manager";
-    const newHotel={id,name:nm.trim(),hotelManager:{name:mgNm,email:em||"",password:pw||"manager1"},deptManagers:[],staffLogin:{username:"staff",password:"staff123"},staff:[],departments:[{id:"fo",name:"Front Office",icon:"🛎️",outlets:[]},{id:"fb",name:"Food & Beverage",icon:"🍽️",outlets:[]}],assignments:[],segments:SEGS_DEFAULT,forecast:{fo:{},fb:{}},requests:[],reviews:[],warnings:[]};
+  const addHotel=async()=>{const nm=prompt("Hotel name:");if(!nm?.trim())return;const id=gid();const mgNm=prompt("Hotel manager name:")||"Manager";const em=prompt("Hotel manager email:");const pw=prompt("Hotel manager password:")||"manager1";
+    if(em)await authCreateUser(em,pw);
+    const newHotel={id,name:nm.trim(),hotelManager:{name:mgNm,email:em||"",password:pw},deptManagers:[],staffLogin:{username:"staff",password:"staff123"},staff:[],departments:[{id:"fo",name:"Front Office",icon:"🛎️",outlets:[]},{id:"fb",name:"Food & Beverage",icon:"🍽️",outlets:[]}],assignments:[],segments:SEGS_DEFAULT,forecast:{fo:{},fb:{}},requests:[],reviews:[],warnings:[],lastLogin:new Date().toISOString(),createdAt:new Date().toISOString()};
     saveSystem({...system,hotels:[...system.hotels,{id,name:nm.trim()}]});saveHotel(id,newHotel);};
-  const delHotel=(hid)=>{if(!confirm("Delete this hotel permanently?"))return;saveSystem({...system,hotels:system.hotels.filter(h=>h.id!==hid)});};
+  const delHotel=async(hid)=>{if(!confirm("Delete hotel '"+system.hotels.find(h=>h.id===hid)?.name+"' permanently? All data will be lost."))return;saveSystem({...system,hotels:system.hotels.filter(h=>h.id!==hid)});};
+  const archiveHotel=async(hid)=>{const hd=hotelData[hid];if(!hd)return;saveHotel(hid,{...hd,archived:true,archivedAt:new Date().toISOString()});};
+  const restoreHotel=async(hid)=>{const hd=hotelData[hid];if(!hd)return;saveHotel(hid,{...hd,archived:false,archivedAt:null});};
+  const addAdmin=async()=>{const nm=prompt("Name:");const em=prompt("Email:");const pw=prompt("Password:");if(!nm||!em||!pw)return;await authCreateUser(em,pw);saveSystem({...system,admins:[...system.admins,{id:gid(),name:nm,email:em,password:pw}]});};
+  const sendReset=async(email)=>{if(!email){alert("No email address on this account.");return;}const r=await authSendReset(email);alert(r.ok?"Reset email sent to "+email:"Error: "+(r.code||"unknown"));};
+
+  // Categorize hotels
+  const now=new Date();
+  const THREE_MONTHS=90*24*60*60*1000;
+  const FIVE_YEARS=5*365*24*60*60*1000;
+  const activeHotels=[];const archivedHotels=[];const autoArchive=[];
+  system.hotels.forEach(hMeta=>{
+    const hd=hotelData[hMeta.id];
+    if(!hd){activeHotels.push(hMeta);return;}
+    if(hd.archived){archivedHotels.push(hMeta);return;}
+    const lastAct=hd.lastLogin||hd.lastActivity||hd.createdAt;
+    const inactive=lastAct?now-new Date(lastAct):0;
+    // Auto-archive after 3 months inactive (except test hotel)
+    if(inactive>THREE_MONTHS&&hMeta.id!=="test"){autoArchive.push(hMeta);archivedHotels.push(hMeta);}
+    // Auto-delete after 5 years (would happen on load — for now just flag)
+    else if(inactive>FIVE_YEARS&&hMeta.id!=="test"){/* auto-delete on next cleanup */}
+    else{activeHotels.push(hMeta);}
+  });
+  // Process auto-archives
+  if(autoArchive.length>0){autoArchive.forEach(hMeta=>{const hd=hotelData[hMeta.id];if(hd&&!hd.archived)saveHotel(hMeta.id,{...hd,archived:true,archivedAt:new Date().toISOString(),autoArchived:true});});}
+
+  const formatDate=(d)=>{if(!d)return "Unknown";const dt=new Date(d);return dt.toLocaleDateString("nl-NL",{day:"numeric",month:"short",year:"numeric"});};
+  const daysSince=(d)=>{if(!d)return "?";return Math.floor((now-new Date(d))/(24*60*60*1000));};
+
+  const HotelCard=({hMeta,isArchived})=>{const hd=hotelData[hMeta.id];const lastAct=hd?.lastLogin||hd?.lastActivity||hd?.createdAt;
+    return (
+      <div style={{padding:16,borderRadius:12,border:`1px solid ${isArchived?P.orgL:P.gryL}`,background:isArchived?P.orgL:P.bg,opacity:isArchived?.8:1}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:8}}>
+          <div style={{flex:1}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+              <h4 style={{margin:0,color:P.navy}}>{hMeta.name}</h4>
+              {hMeta.id==="test"&&<Badge color={P.pur} bg={P.purL}>Demo</Badge>}
+              {isArchived&&<Badge color={P.org} bg={P.orgL}>Archived</Badge>}
+            </div>
+            <div style={{fontSize:12,color:P.gry}}>
+              {hd?`${hd.departments?.length||0} depts · ${hd.staff?.length||0} staff · Manager: ${hd.hotelManager?.email||"—"}`:"Data not loaded"}
+            </div>
+            <div style={{fontSize:11,color:P.gry,marginTop:4}}>
+              Last active: {formatDate(lastAct)} ({daysSince(lastAct)} days ago)
+              {hd?.createdAt&&` · Created: ${formatDate(hd.createdAt)}`}
+            </div>
+          </div>
+          <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+            {!isArchived&&<button style={S.addBtn} onClick={()=>onEnterHotel(hMeta.id)}>Enter →</button>}
+            {isArchived&&<button style={{...S.addBtn,background:P.grnL,color:P.grn}} onClick={()=>restoreHotel(hMeta.id)}>Restore</button>}
+            {!isArchived&&hMeta.id!=="test"&&<button style={{...S.addBtn,background:P.orgL,color:P.org,fontSize:11}} onClick={()=>archiveHotel(hMeta.id)}>Archive</button>}
+            {hMeta.id!=="test"&&<button style={S.delBtn} onClick={()=>delHotel(hMeta.id)}>✕</button>}
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div style={S.app}>
       <header style={S.header}><div style={{display:"flex",alignItems:"center",gap:12}}><span style={{fontSize:24}}>🏨</span><div><h1 style={S.hTitle}>ShiftMaster</h1><p style={S.hSub}>System Admin</p></div></div>
         <button style={S.logBtn} onClick={logout}>Sign Out</button></header>
       <nav style={S.nav}><div style={{display:"flex",gap:4}}>
-        {[{id:"hotels",l:"🏨 Hotels"},{id:"admins",l:"🔒 Admins"}].map(t=> <button key={t.id} style={{...S.navBtn,...(tab===t.id?S.navBtnA:{})}} onClick={()=>setTab(t.id)}>{t.l}</button>)}
+        {[{id:"hotels",l:"🏨 Active Hotels"},{id:"archive",l:"📦 Archive"},{id:"admins",l:"🔒 Admins"}].map(t=> <button key={t.id} style={{...S.navBtn,...(tab===t.id?S.navBtnA:{}),position:"relative"}} onClick={()=>setTab(t.id)}>
+          {t.l}{t.id==="archive"&&archivedHotels.length>0&&<span style={{position:"absolute",top:-4,right:-4,background:P.org,color:P.wh,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:10}}>{archivedHotels.length}</span>}
+        </button>)}
       </div></nav>
       <main style={S.main}>
         {tab==="hotels"&&<div style={S.card}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><h3 style={{margin:0,color:P.navy}}>🏨 Hotels</h3><button style={S.addBtn} onClick={addHotel}>+ Add Hotel</button></div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><h3 style={{margin:0,color:P.navy}}>🏨 Active Hotels ({activeHotels.length})</h3><button style={S.addBtn} onClick={addHotel}>+ Add Hotel</button></div>
           <div style={{display:"grid",gap:12}}>
-            {system.hotels.map(hMeta=>{const hd=hotelData[hMeta.id];return (
-              <div key={hMeta.id} style={{padding:16,borderRadius:12,border:`1px solid ${P.gryL}`,background:P.bg}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <div><h4 style={{margin:0,color:P.navy}}>{hMeta.name}{hMeta.id==="test"&&<Badge color={P.pur} bg={P.purL}>Demo</Badge>}</h4>
-                    <div style={{fontSize:12,color:P.gry,marginTop:4}}>{hd?`${hd.departments?.length||0} depts · ${hd.staff?.length||0} staff · Manager: ${hd.hotelManager?.email||"—"}`:"Loading..."}</div></div>
-                  <div style={{display:"flex",gap:4}}><button style={S.addBtn} onClick={()=>onEnterHotel(hMeta.id)}>Enter →</button>{hMeta.id!=="test"&&<button style={S.delBtn} onClick={()=>delHotel(hMeta.id)}>✕</button>}</div>
-                </div></div>);})}
+            {activeHotels.map(hMeta=> <HotelCard key={hMeta.id} hMeta={hMeta} isArchived={false}/>)}
+            {!activeHotels.length&&<p style={{color:P.gry,textAlign:"center",padding:16}}>No active hotels. Create one above.</p>}
+          </div>
+        </div>}
+        {tab==="archive"&&<div style={S.card}>
+          <h3 style={{margin:"0 0 8px",color:P.navy}}>📦 Archived Hotels ({archivedHotels.length})</h3>
+          <p style={{fontSize:12,color:P.gry,margin:"0 0 16px"}}>Hotels inactive for 3+ months are automatically archived. Archived hotels are permanently deleted after 5 years of inactivity.</p>
+          <div style={{display:"grid",gap:12}}>
+            {archivedHotels.map(hMeta=> <HotelCard key={hMeta.id} hMeta={hMeta} isArchived={true}/>)}
+            {!archivedHotels.length&&<p style={{color:P.gry,textAlign:"center",padding:16}}>No archived hotels.</p>}
           </div>
         </div>}
         {tab==="admins"&&<div style={S.card}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><h3 style={{margin:0,color:P.navy}}>🔒 System Admins</h3>
-            <button style={S.addBtn} onClick={()=>{const nm=prompt("Name:");const em=prompt("Email:");const pw=prompt("Password:");if(!nm||!em||!pw)return;saveSystem({...system,admins:[...system.admins,{id:gid(),name:nm,email:em,password:pw}]});}}>+ Add Admin</button></div>
-          {system.admins.map(a=> <div key={a.id} style={{...S.profRow,marginBottom:6}}><span><strong>{a.name}</strong> — {a.email}</span>{system.admins.length>1&&<button style={S.delBtn} onClick={()=>saveSystem({...system,admins:system.admins.filter(x=>x.id!==a.id)})}>✕</button>}</div>)}
+            <button style={S.addBtn} onClick={addAdmin}>+ Add Admin</button></div>
+          {system.admins.map(a=> <div key={a.id} style={{...S.profRow,marginBottom:6}}><span><strong>{a.name}</strong> — {a.email}</span><div style={{display:"flex",gap:4}}><button style={{...S.addBtn,background:P.bluL,color:P.blu,fontSize:11}} onClick={()=>sendReset(a.email)}>Send Reset</button>{system.admins.length>1&&<button style={S.delBtn} onClick={()=>saveSystem({...system,admins:system.admins.filter(x=>x.id!==a.id)})}>✕</button>}</div></div>)}
         </div>}
       </main>
     </div>
