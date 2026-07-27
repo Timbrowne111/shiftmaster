@@ -2,16 +2,27 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { dbGet, dbSet, authLogin, authCreateUser, authSendReset, authChangePassword, authLogout } from './firebase.js';
 
 // ── Constants ──────────────────────────────────────────────────────────
-const DAYS=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],DAYS_F=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+const DAYS=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const CAO={maxShift:10,maxWeek:45,maxConsec:7,minRest:11,breakTh:5.5,breakMins:30};
-const CT=[{id:"fulltime",label:"Full-time",icon:"🟢",color:"#27ae60",h:38},{id:"parttime",label:"Part-time",icon:"🟡",color:"#f59e0b",h:24},{id:"extra",label:"Extra/Flex",icon:"🔴",color:"#c0392b",h:0}];
+const CT=[{id:"fulltime",label:"Full-time",icon:"🟢",color:"#27ae60"},{id:"parttime",label:"Part-time",icon:"🟡",color:"#f59e0b"},{id:"extra",label:"Extra/Flex",icon:"🔴",color:"#c0392b"}];
 const SEGS_DEFAULT=[{id:"mice",name:"MICE",color:"#6366f1"},{id:"leisure",name:"Leisure",color:"#06b6d4"},{id:"business",name:"Business",color:"#f59e0b"},{id:"group",name:"Group",color:"#10b981"}];
 const REQ_TYPES=[{id:"holiday",label:"Holiday",icon:"🏖️",color:"#06b6d4"},{id:"day_off",label:"Day Off",icon:"📅",color:"#8b5cf6"},{id:"schedule_change",label:"Schedule Change",icon:"🔄",color:"#f59e0b"}];
-const REQ_ST={pending:{label:"Pending",color:"#e67e22",bg:"rgba(230,126,34,0.12)"},approved:{label:"Approved",color:"#27ae60",bg:"rgba(39,174,96,0.12)"},denied:{label:"Denied",color:"#c0392b",bg:"rgba(192,57,43,0.12)"}};
-const RV_TYPES=[{id:"probation",label:"Probation",icon:"🔍"},{id:"interim",label:"Interim",icon:"📋"},{id:"annual",label:"Annual",icon:"📊"}];
-const WARN_TYPES=[{id:"verbal",label:"Verbal",icon:"💬",color:"#e67e22"},{id:"written",label:"Written",icon:"📝",color:"#c0392b"},{id:"final",label:"Final",icon:"🚨",color:"#7f1d1d"}];
 
-const P={navy:"#2d1b4e",navyL:"#3d2663",navyM:"#4a3175",acc:"#e63946",accDim:"rgba(230,57,70,0.12)",cream:"#faf0f1",wh:"#fff",red:"#c0392b",redL:"rgba(192,57,43,0.12)",grn:"#27ae60",grnL:"rgba(39,174,96,0.12)",org:"#e67e22",orgL:"rgba(230,126,34,0.12)",blu:"#2980b9",bluL:"rgba(41,128,185,0.10)",pur:"#7c3aed",purL:"rgba(124,58,237,0.10)",gry:"#7f8c9b",gryL:"#e8ecf0",gryD:"#4a5568",bg:"#f5f0f6"};
+// ── Palette ────────────────────────────────────────────────────────────
+const P={
+  navy:"#1e1145",navyL:"#2d1b6e",navyM:"#3a2580",
+  acc:"#e63946",accDim:"rgba(230,57,70,0.08)",accSoft:"rgba(230,57,70,0.15)",
+  cream:"#faf0f1",wh:"#ffffff",
+  red:"#dc2626",redL:"rgba(220,38,38,0.08)",
+  grn:"#16a34a",grnL:"rgba(22,163,74,0.08)",
+  org:"#ea580c",orgL:"rgba(234,88,12,0.08)",
+  blu:"#2563eb",bluL:"rgba(37,99,235,0.08)",
+  pur:"#7c3aed",purL:"rgba(124,58,237,0.08)",
+  gry:"#94a3b8",gryL:"#f1f5f9",gryM:"#e2e8f0",gryD:"#475569",
+  bg:"#f8fafc",card:"#ffffff",
+  // Schedule cell colors
+  cellFull:"rgba(22,163,74,0.06)",cellPartial:"rgba(234,88,12,0.06)",cellEmpty:"rgba(220,38,38,0.05)",
+};
 
 // ── Utilities ──────────────────────────────────────────────────────────
 const gid=()=>Math.random().toString(36).substr(2,9);
@@ -22,19 +33,14 @@ function sDur(s,e){const[sh,sm]=s.split(":").map(Number),[eh,em]=e.split(":").ma
 function tMin(t){const[h,m]=t.split(":").map(Number);return h*60+m;}
 
 // ── CAO Check ──────────────────────────────────────────────────────────
-function caoCheck(sid,asgn,defs,di){const w=[],sa=asgn.filter(a=>a.staffId===sid),ta=sa.filter(a=>a.dayIndex===di);let th=0;ta.forEach(a=>{const d=defs.find(s=>s.id===a.shiftId);if(d)th+=sDur(d.startTime,d.endTime);});if(th>CAO.maxShift)w.push({type:"error",msg:`>${CAO.maxShift}h/day`});if(th>CAO.breakTh)w.push({type:"info",msg:`${CAO.breakMins}min break req.`});let wh=0;sa.forEach(a=>{const d=defs.find(s=>s.id===a.shiftId);if(d)wh+=sDur(d.startTime,d.endTime);});if(wh>CAO.maxWeek)w.push({type:"error",msg:`>${CAO.maxWeek}h/week`});const wd=new Set(sa.map(a=>a.dayIndex));let mc=0,c=0;for(let i=0;i<7;i++){if(wd.has(i)){c++;mc=Math.max(mc,c);}else c=0;}if(mc>CAO.maxConsec)w.push({type:"error",msg:`${mc} consec days`});if(di>0){const pv=sa.filter(a=>a.dayIndex===di-1);if(pv.length&&ta.length){let le=0;pv.forEach(a=>{const d=defs.find(s=>s.id===a.shiftId);if(d)le=Math.max(le,tMin(d.endTime));});let es=1440;ta.forEach(a=>{const d=defs.find(s=>s.id===a.shiftId);if(d)es=Math.min(es,tMin(d.startTime));});const r=(1440-le+es)/60;if(r<CAO.minRest)w.push({type:"error",msg:`${r.toFixed(1)}h rest`});}}return w;}
-
-// ── Forecast ───────────────────────────────────────────────────────────
-function calcFc(outlet,di,fc,segs,deptId){if(deptId==="fo"){const df=fc.fo?.[di]||{},ci=+(df.checkIns||0),co=+(df.checkOuts||0),tot=ci+co,r={};outlet.shifts.forEach(s=>{const cap=+(outlet.handlingCapacity?.[s.id]||0);if(cap>0){const h=+s.startTime.split(":")[0],load=h<12?co*.7+ci*.3:co*.3+ci*.7;r[s.id]={demand:Math.round(load),recommended:Math.ceil(load/cap),capacity:cap};}else r[s.id]={demand:tot,recommended:s.staffNeeded,capacity:0};});return {totalHandlings:tot,results:r};}const df=fc.fb?.[di]||{};let tot=0;segs.forEach(seg=>{tot+=+(df[seg.id]||0)*(+(outlet.captureRates?.[seg.id]||0)/100);});const r={};outlet.shifts.forEach(s=>{const cap=+(outlet.handlingCapacity?.[s.id]||0);if(cap>0){const sd=tot/(outlet.shifts.length||1);r[s.id]={demand:Math.round(sd),recommended:Math.ceil(sd/cap),capacity:cap};}else r[s.id]={demand:Math.round(tot),recommended:s.staffNeeded,capacity:0};});return {totalExpected:Math.round(tot),results:r};}
+function caoCheck(sid,asgn,defs,di){const w=[],sa=asgn.filter(a=>a.staffId===sid),ta=sa.filter(a=>a.dayIndex===di);let th=0;ta.forEach(a=>{const d=defs.find(s=>s.id===a.shiftId);if(d)th+=sDur(d.startTime,d.endTime);});if(th>CAO.maxShift)w.push({type:"error",msg:`Max ${CAO.maxShift}h/day exceeded (${th.toFixed(1)}h)`});if(th>CAO.breakTh)w.push({type:"info",msg:`${CAO.breakMins}min break required`});let wh=0;sa.forEach(a=>{const d=defs.find(s=>s.id===a.shiftId);if(d)wh+=sDur(d.startTime,d.endTime);});if(wh>CAO.maxWeek)w.push({type:"error",msg:`Max ${CAO.maxWeek}h/week exceeded (${wh.toFixed(1)}h)`});const wd=new Set(sa.map(a=>a.dayIndex));let mc=0,c=0;for(let i=0;i<7;i++){if(wd.has(i)){c++;mc=Math.max(mc,c);}else c=0;}if(mc>CAO.maxConsec)w.push({type:"error",msg:`${mc} consecutive days (max ${CAO.maxConsec})`});if(di>0){const pv=sa.filter(a=>a.dayIndex===di-1);if(pv.length&&ta.length){let le=0;pv.forEach(a=>{const d=defs.find(s=>s.id===a.shiftId);if(d)le=Math.max(le,tMin(d.endTime));});let es=1440;ta.forEach(a=>{const d=defs.find(s=>s.id===a.shiftId);if(d)es=Math.min(es,tMin(d.startTime));});const r=(1440-le+es)/60;if(r<CAO.minRest)w.push({type:"error",msg:`Only ${r.toFixed(1)}h rest (min ${CAO.minRest}h)`});}}return w;}
 
 // ── Payroll ────────────────────────────────────────────────────────────
 const NLP={b1R:.3697,b1M:75518,b2R:.4950,ahk:3362,ak:5532,zvw:.0668,wwL:.0264,wwH:.0764,wia:.0711,whk:.005,vak:.08,penEE:.055,penER:.11};
 function calcPay(staff,hrs){const rate=Number(staff.hourlyRate)||13.68,h=Number(hrs)||0,wG=h*rate,aG=wG*52,vak=aG*NLP.vak,tax=aG+vak,it=tax<=NLP.b1M?tax*NLP.b1R:NLP.b1M*NLP.b1R+(tax-NLP.b1M)*NLP.b2R,nit=Math.max(0,it-Math.min(it,NLP.ahk+NLP.ak)),pEE=aG*NLP.penEE,aN=aG-nit-pEE,isFlex=staff.contractType==="extra",ww=aG*(isFlex?NLP.wwH:NLP.wwL),erTot=aG*NLP.zvw+ww+aG*NLP.wia+aG*NLP.whk+aG*NLP.penER+vak,tcA=aG+erTot;return {rate,hrs:h,wG,mG:wG*52/12,aG,vak,nit,nitM:nit/12,pEE,pEEM:pEE/12,aN,mN:aN/12,wN:aN/52,erTot,tcA,tcM:tcA/12,tcW:tcA/52,cph:h>0?tcA/52/h:0};}
 
 // ── Recommendations ────────────────────────────────────────────────────
-function genRecs(staffList,asgn,depts,fc,segs){try{const allD=depts.flatMap(d=>d.outlets.flatMap(o=>o.shifts)),sH={};staffList.forEach(s=>{let h=0;asgn.filter(a=>a.staffId===s.id).forEach(a=>{const d=allD.find(x=>x.id===a.shiftId);if(d)h+=sDur(d.startTime,d.endTime);});sH[s.id]=h;});const ft=staffList.filter(s=>s.contractType==="fulltime"),pt=staffList.filter(s=>s.contractType==="parttime"),ex=staffList.filter(s=>s.contractType==="extra");const uFT=ft.filter(s=>(sH[s.id]||0)<(s.contractHours||38)-2);const swaps=[];asgn.forEach(a=>{const st=staffList.find(s=>s.id===a.staffId);if(!st||st.contractType==="fulltime")return;const sd=allD.find(d=>d.id===a.shiftId);if(!sd)return;const shH=sDur(sd.startTime,sd.endTime);const cands=ft.filter(f=>{if(f.outletId!==st.outletId)return false;if((sH[f.id]||0)+shH>(f.contractHours||38)+2)return false;if(asgn.some(x=>x.staffId===f.id&&x.shiftId===a.shiftId&&x.dayIndex===a.dayIndex))return false;return true;});if(cands.length)swaps.push({currentStaff:st,shift:sd,dayIndex:a.dayIndex,assignmentId:a.id,candidates:cands.map(f=>({...f,currentHours:sH[f.id]||0,remainingCapacity:(f.contractHours||38)-(sH[f.id]||0)}))});});const tFTS=ft.reduce((s,x)=>s+(sH[x.id]||0),0),tPTS=pt.reduce((s,x)=>s+(sH[x.id]||0),0),tEXS=ex.reduce((s,x)=>s+(sH[x.id]||0),0),tS=tFTS+tPTS+tEXS;return {underutilizedFT:uFT,swapSuggestions:swaps,uncoveredFTSuggestions:[],overstaffed:[],utilization:{fulltime:ft.map(s=>({...s,scheduled:sH[s.id]||0,contract:s.contractHours||38,pct:Math.round(((sH[s.id]||0)/(s.contractHours||38))*100)})),parttime:pt.map(s=>({...s,scheduled:sH[s.id]||0,contract:s.contractHours||24,pct:s.contractHours?Math.round(((sH[s.id]||0)/s.contractHours)*100):0})),extra:ex.map(s=>({...s,scheduled:sH[s.id]||0}))},summary:{totalFTCapacity:ft.reduce((s,x)=>s+(x.contractHours||38),0),totalFTScheduled:tFTS,totalPTScheduled:tPTS,totalExScheduled:tEXS,totalScheduled:tS,ftRatio:tS>0?Math.round(tFTS/tS*100):0},staffHours:sH};}catch(e){return {underutilizedFT:[],swapSuggestions:[],uncoveredFTSuggestions:[],overstaffed:[],utilization:{fulltime:[],parttime:[],extra:[]},summary:{totalFTCapacity:0,totalFTScheduled:0,totalPTScheduled:0,totalExScheduled:0,totalScheduled:0,ftRatio:0},staffHours:{}};}}
-
-// ── Storage imported from firebase.js ──
+function genRecs(staffList,asgn,depts){try{const allD=depts.flatMap(d=>d.outlets.flatMap(o=>o.shifts)),sH={};staffList.forEach(s=>{let h=0;asgn.filter(a=>a.staffId===s.id).forEach(a=>{const d=allD.find(x=>x.id===a.shiftId);if(d)h+=sDur(d.startTime,d.endTime);});sH[s.id]=h;});const ft=staffList.filter(s=>s.contractType==="fulltime"),pt=staffList.filter(s=>s.contractType==="parttime"),ex=staffList.filter(s=>s.contractType==="extra");const tFTS=ft.reduce((s,x)=>s+(sH[x.id]||0),0),tPTS=pt.reduce((s,x)=>s+(sH[x.id]||0),0),tEXS=ex.reduce((s,x)=>s+(sH[x.id]||0),0),tS=tFTS+tPTS+tEXS;return {summary:{totalFTCapacity:ft.reduce((s,x)=>s+(x.contractHours||38),0),totalFTScheduled:tFTS,totalPTScheduled:tPTS,totalExScheduled:tEXS,totalScheduled:tS,ftRatio:tS>0?Math.round(tFTS/tS*100):0},staffHours:sH};}catch{return {summary:{totalFTCapacity:0,totalFTScheduled:0,totalPTScheduled:0,totalExScheduled:0,totalScheduled:0,ftRatio:0},staffHours:{}};}}
 
 // ══════════════════════════════════════════════════════════════════════
 // ── TEST HOTEL DEMO DATA ─────────────────────────────────────────────
@@ -65,12 +71,29 @@ function buildTestHotel(){
     {id:"s-amber",name:"Amber Schouten",email:"",outletId:"fb-banq",contractType:"extra",contractHours:0,hourlyRate:13.68},
   ];
   const departments=[
-    {id:"fo",name:"Front Office",icon:"🛎️",outlets:[{id:"fo-desk",name:"Front Desk",shifts:[{id:"fo-early",name:"Early",startTime:"06:00",endTime:"14:30",staffNeeded:2},{id:"fo-late",name:"Late",startTime:"14:00",endTime:"22:30",staffNeeded:2},{id:"fo-night",name:"Night",startTime:"22:00",endTime:"06:30",staffNeeded:1}],captureRates:{},handlingCapacity:{"fo-early":20,"fo-late":25,"fo-night":8}}]},
+    {id:"fo",name:"Front Office",icon:"🛎️",outlets:[{id:"fo-desk",name:"Front Desk",shifts:[
+      {id:"fo-early",name:"Early",startTime:"06:00",endTime:"14:30",staffNeeded:2},
+      {id:"fo-late",name:"Late",startTime:"14:00",endTime:"22:30",staffNeeded:2},
+      {id:"fo-night",name:"Night",startTime:"22:00",endTime:"06:30",staffNeeded:1}
+    ],captureRates:{},handlingCapacity:{}}]},
     {id:"fb",name:"Food & Beverage",icon:"🍽️",outlets:[
-      {id:"fb-rest",name:"Restaurant",shifts:[{id:"re-brkfst",name:"Breakfast",startTime:"06:00",endTime:"11:00",staffNeeded:3},{id:"re-lunch",name:"Lunch",startTime:"11:00",endTime:"15:30",staffNeeded:3},{id:"re-dinner",name:"Dinner",startTime:"17:00",endTime:"23:00",staffNeeded:4}],captureRates:{mice:"30",leisure:"65",business:"45",group:"70"},handlingCapacity:{"re-brkfst":25,"re-lunch":20,"re-dinner":18}},
-      {id:"fb-bar",name:"Bar",shifts:[{id:"ba-day",name:"Day",startTime:"10:00",endTime:"18:00",staffNeeded:1},{id:"ba-eve",name:"Evening",startTime:"17:00",endTime:"01:00",staffNeeded:2}],captureRates:{mice:"15",leisure:"35",business:"50",group:"10"},handlingCapacity:{"ba-day":30,"ba-eve":22}},
-      {id:"fb-rs",name:"Room Service",shifts:[{id:"rs-morn",name:"Morning",startTime:"06:30",endTime:"14:00",staffNeeded:1},{id:"rs-eve",name:"Evening",startTime:"14:00",endTime:"22:00",staffNeeded:1}],captureRates:{mice:"5",leisure:"15",business:"25",group:"3"},handlingCapacity:{"rs-morn":12,"rs-eve":12}},
-      {id:"fb-banq",name:"Banqueting",shifts:[{id:"bq-day",name:"Day",startTime:"08:00",endTime:"16:00",staffNeeded:2},{id:"bq-eve",name:"Eve",startTime:"16:00",endTime:"00:00",staffNeeded:2}],captureRates:{mice:"80",leisure:"0",business:"10",group:"60"},handlingCapacity:{"bq-day":30,"bq-eve":30}},
+      {id:"fb-rest",name:"Restaurant",shifts:[
+        {id:"re-brkfst",name:"Breakfast",startTime:"06:00",endTime:"11:00",staffNeeded:3},
+        {id:"re-lunch",name:"Lunch",startTime:"11:00",endTime:"15:30",staffNeeded:3},
+        {id:"re-dinner",name:"Dinner",startTime:"17:00",endTime:"23:00",staffNeeded:4}
+      ],captureRates:{},handlingCapacity:{}},
+      {id:"fb-bar",name:"Bar",shifts:[
+        {id:"ba-day",name:"Day",startTime:"10:00",endTime:"18:00",staffNeeded:1},
+        {id:"ba-eve",name:"Evening",startTime:"17:00",endTime:"01:00",staffNeeded:2}
+      ],captureRates:{},handlingCapacity:{}},
+      {id:"fb-rs",name:"Room Service",shifts:[
+        {id:"rs-morn",name:"Morning",startTime:"06:30",endTime:"14:00",staffNeeded:1},
+        {id:"rs-eve",name:"Evening",startTime:"14:00",endTime:"22:00",staffNeeded:1}
+      ],captureRates:{},handlingCapacity:{}},
+      {id:"fb-banq",name:"Banqueting",shifts:[
+        {id:"bq-day",name:"Day",startTime:"08:00",endTime:"16:00",staffNeeded:2},
+        {id:"bq-eve",name:"Eve",startTime:"16:00",endTime:"00:00",staffNeeded:2}
+      ],captureRates:{},handlingCapacity:{}},
     ]},
   ];
   const a=[];const m=(sh,d,st)=>a.push(mk(sh,d,st));
@@ -92,64 +115,425 @@ function buildTestHotel(){
     deptManagers:[{id:gid(),name:"Jan de Vries",email:"jan@test.com",password:"manager1",deptIds:["fb"]}],
     staffLogin:{username:"staff",password:"staff123"},
     staff,departments,assignments:a,segments:SEGS_DEFAULT,
-    forecast:{fo:{0:{checkIns:"42",checkOuts:"38"},1:{checkIns:"55",checkOuts:"30"},2:{checkIns:"48",checkOuts:"35"},3:{checkIns:"60",checkOuts:"25"},4:{checkIns:"70",checkOuts:"45"},5:{checkIns:"35",checkOuts:"65"},6:{checkIns:"20",checkOuts:"50"}},fb:{0:{mice:"40",leisure:"60",business:"45",group:"20"},1:{mice:"40",leisure:"65",business:"50",group:"20"},2:{mice:"45",leisure:"70",business:"50",group:"25"},3:{mice:"50",leisure:"75",business:"55",group:"30"},4:{mice:"55",leisure:"90",business:"60",group:"35"},5:{mice:"20",leisure:"110",business:"30",group:"40"},6:{mice:"10",leisure:"95",business:"15",group:"35"}}},
-    requests:[{id:"req-1",staffId:"s-emma",type:"holiday",startDate:"2026-04-06",endDate:"2026-04-10",reason:"Spring holiday",status:"pending",created:"2026-03-20"}],
-    reviews:[{id:"rv-1",staffId:"s-emma",date:"2025-12-15",type:"annual",rating:4,notes:"Excellent guest interaction.",by:"mgr"},{id:"rv-2",staffId:"s-tom",date:"2026-01-10",type:"annual",rating:5,notes:"Outstanding team leader.",by:"mgr"}],
-    warnings:[{id:"wn-1",staffId:"s-sem",date:"2026-02-14",type:"verbal",reason:"Late arrival without notice.",by:"mgr"},{id:"wn-2",staffId:"s-sem",date:"2026-03-05",type:"written",reason:"Second late arrival. Formal warning.",by:"mgr"}],
+    forecast:{fo:{},fb:{}},requests:[],reviews:[],warnings:[],
+    lastLogin:new Date().toISOString(),createdAt:new Date().toISOString(),
   };
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// ── SMALL COMPONENTS ─────────────────────────────────────────────────
+// ── UI COMPONENTS ────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════
-function Badge({children,color=P.gry,bg=P.gryL}){return <span style={{display:"inline-flex",alignItems:"center",gap:3,padding:"2px 8px",borderRadius:10,fontSize:11,fontWeight:700,background:bg,color}}>{children}</span>;}
-function SBadge({type,compact}){const ct=CT.find(c=>c.id===type)||CT[2];if(compact)return <span style={{fontSize:10}} title={ct.label}>{ct.icon}</span>;return <Badge color={ct.color} bg={ct.color+"18"}>{ct.icon} {ct.label}</Badge>;}
-function Ind({rec,assigned,compact}){if(!rec&&!assigned)return null;const d=assigned-rec,st=d>=0?(d===0?"ok":"over"):"under";const c={ok:{i:"✓",c:P.grn,b:P.grnL},over:{i:"▲",c:P.blu,b:P.bluL},under:{i:"▼",c:P.red,b:P.redL}}[st];return <Badge color={c.c} bg={c.b}>{c.i} {compact?`${assigned}/${rec}`:st==="ok"?"Staffed":d>0?`+${d}`:String(d)}</Badge>;}
-function WNav({wo,set,wd}){return <div style={{display:"flex",alignItems:"center",gap:6}}><button style={S.wBtn} onClick={()=>set(wo-1)}>‹</button><span style={{fontSize:13,fontWeight:600,color:P.cream,minWidth:130,textAlign:"center"}}>{fD(wd[0])} — {fD(wd[6])}</span><button style={S.wBtn} onClick={()=>set(wo+1)}>›</button>{wo!==0&&<button style={{...S.wBtn,fontSize:10}} onClick={()=>set(0)}>Today</button>}</div>;}
-function CovB({shift,asgn,di}){const n=asgn.filter(a=>a.shiftId===shift.id&&a.dayIndex===di).length,ok=n>=shift.staffNeeded;return <Badge color={ok?P.grn:n>0?P.org:P.red} bg={ok?P.grnL:n>0?P.orgL:P.redL}><span style={{fontSize:8}}>{ok?"●":"○"}</span> {n}/{shift.staffNeeded}</Badge>;}
 
-// ══════════════════════════════════════════════════════════════════════
-// ── SCHEDULE GRID ────────────────────────────────────────────────────
-// ══════════════════════════════════════════════════════════════════════
-function Grid({outlet,asgn,setAsgn,staff,wd,allDefs,fc,segs,deptId}){
-  const[tt,setTt]=useState(null);
-  const getA=(sid,di)=>asgn.filter(a=>a.shiftId===sid&&a.dayIndex===di);
-  const avail=(sid,di)=>{const ids=getA(sid,di).map(a=>a.staffId);return staff.filter(s=>!ids.includes(s.id));};
-  if(!outlet.shifts.length)return <div style={{padding:24,textAlign:"center",color:P.gry}}>No shifts defined. Add in ⚙️ Settings.</div>;
-  const hasFc=deptId==="fo"?DAYS.some((_,i)=>Number(fc.fo?.[i]?.checkIns||0)+Number(fc.fo?.[i]?.checkOuts||0)>0):DAYS.some((_,i)=>segs.some(seg=>Number(fc.fb?.[i]?.[seg.id]||0)>0));
-  const dFc=DAYS.map((_,i)=>calcFc(outlet,i,fc,segs,deptId));
-  return (<div style={{overflowX:"auto"}}>
-    <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}><thead><tr><th style={{...S.th,width:140,minWidth:140}}>Shift</th>{DAYS.map((d,i)=> <th key={d} style={S.th}><div>{d}</div><div style={{fontWeight:400,fontSize:11,opacity:.7}}>{fD(wd[i])}</div></th>)}</tr></thead>
-    <tbody>{outlet.shifts.map(shift=> <tr key={shift.id}><td style={S.tdL}><div style={{fontWeight:700,fontSize:13}}>{shift.name}</div><div style={{fontSize:11,color:P.gry}}>{shift.startTime}–{shift.endTime}</div><div style={{fontSize:10,color:P.gry}}>Min: {shift.staffNeeded}</div></td>
-      {DAYS.map((_,di)=>{const as=getA(shift.id,di),av=avail(shift.id,di),full=as.length>=shift.staffNeeded,fr=dFc[di]?.results?.[shift.id],rec=fr?.recommended||0,hFc=hasFc&&fr&&fr.capacity>0,mx=Math.max(shift.staffNeeded,hFc?rec:0);
-        return <td key={di} style={{...S.td,background:full?"rgba(39,174,96,0.04)":as.length>0?"rgba(230,126,34,0.04)":"rgba(192,57,43,0.04)"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,gap:3,flexWrap:"wrap"}}><CovB shift={shift} asgn={asgn} di={di}/>{hFc&&<Ind rec={rec} assigned={as.length} compact/>}</div>
-          {hFc&&<div style={{fontSize:10,color:P.pur,marginBottom:3}}>📊 ~{fr.demand} → {rec} rec.</div>}
-          {as.map(a=>{const st=staff.find(s=>s.id===a.staffId),ws=caoCheck(a.staffId,asgn,allDefs,di),he=ws.some(w=>w.type==="error");
-            return <div key={a.id} style={{...S.chip,borderLeft:he?`3px solid ${P.red}`:`3px solid ${P.grn}`,position:"relative"}} onMouseEnter={e=>{if(ws.length)setTt({x:e.clientX,y:e.clientY+10,w:ws});}} onMouseLeave={()=>setTt(null)}>
-              <SBadge type={st?.contractType} compact/><span style={{flex:1,fontSize:12}}>{st?.name||"?"}</span>
-              <button onClick={()=>setAsgn(asgn.filter(x=>x.id!==a.id))} style={S.chipRm}>✕</button>{he&&<span style={{position:"absolute",top:-4,right:-4,fontSize:10}}>⚠️</span>}</div>;})}
-          {as.length<mx&&<select style={S.asSel} value="" onChange={e=>{if(e.target.value)setAsgn([...asgn,{id:gid(),shiftId:shift.id,dayIndex:di,staffId:e.target.value}]);}}><option value="">+ Assign</option>{av.map(s=> <option key={s.id} value={s.id}>{CT.find(c=>c.id===s.contractType)?.icon||""} {s.name}</option>)}</select>}
-        </td>;})}</tr>)}</tbody></table>
-    {tt&&<div style={{position:"fixed",left:tt.x+8,top:tt.y,background:P.navy,color:P.cream,padding:"8px 12px",borderRadius:8,fontSize:11,zIndex:1000,maxWidth:280,boxShadow:"0 4px 16px rgba(0,0,0,.3)"}}><strong style={{color:P.acc}}>CAO Warnings</strong>{tt.w.map((w,i)=> <div key={i} style={{marginTop:4}}>{w.type==="error"?"🔴":"🔵"} {w.msg}</div>)}</div>}
-  </div>);
+function Badge({children,color=P.gry,bg=P.gryL}){
+  return <span style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 10px",borderRadius:20,fontSize:11,fontWeight:600,background:bg,color,letterSpacing:0.2}}>{children}</span>;
 }
 
-// ── Shift Def Editor ───────────────────────────────────────────────────
-function ShiftDefs({outlet,onUp}){const[add,setAdd]=useState(false),[en,setEn]=useState(""),[es,setEs]=useState("07:00"),[ee,setEe]=useState("15:00"),[ec,setEc]=useState(1);
-  const sv=()=>{if(!en.trim())return;onUp({...outlet,shifts:[...outlet.shifts,{id:gid(),name:en,startTime:es,endTime:ee,staffNeeded:+ec}]});setAdd(false);setEn("");};
-  const upS=(sid,f,v)=>onUp({...outlet,shifts:outlet.shifts.map(s=>s.id===sid?{...s,[f]:f==="staffNeeded"?+v:v}:s)});
-  return <div style={S.shiftEd}><div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}><h4 style={{margin:0,color:P.navy,fontWeight:700,fontSize:15}}>{outlet.name} — Shifts</h4><button style={S.addBtn} onClick={()=>setAdd(true)}>+ Add</button></div>
-    {outlet.shifts.length===0&&!add&&<p style={{color:P.gry,fontSize:13,fontStyle:"italic"}}>No shifts yet.</p>}
-    {outlet.shifts.map(s=> <div key={s.id} style={S.shRow}><input style={{...S.shInp,width:120}} value={s.name} onChange={e=>upS(s.id,"name",e.target.value)}/><label style={S.mini}>From <input type="time" style={S.shInp} value={s.startTime} onChange={e=>upS(s.id,"startTime",e.target.value)}/></label><label style={S.mini}>To <input type="time" style={S.shInp} value={s.endTime} onChange={e=>upS(s.id,"endTime",e.target.value)}/></label><label style={S.mini}>Min <input type="number" min={1} style={{...S.shInp,width:50}} value={s.staffNeeded} onChange={e=>upS(s.id,"staffNeeded",e.target.value)}/></label><span style={{color:P.gry,fontSize:12}}>{sDur(s.startTime,s.endTime).toFixed(1)}h</span><button style={S.delBtn} onClick={()=>onUp({...outlet,shifts:outlet.shifts.filter(x=>x.id!==s.id)})}>✕</button></div>)}
-    {add&&<div style={{...S.shRow,background:P.accDim,borderColor:P.acc}}><input style={{...S.shInp,width:120}} placeholder="Name" value={en} onChange={e=>setEn(e.target.value)} autoFocus/><label style={S.mini}>From <input type="time" style={S.shInp} value={es} onChange={e=>setEs(e.target.value)}/></label><label style={S.mini}>To <input type="time" style={S.shInp} value={ee} onChange={e=>setEe(e.target.value)}/></label><label style={S.mini}>Min <input type="number" min={1} style={{...S.shInp,width:50}} value={ec} onChange={e=>setEc(e.target.value)}/></label><button style={S.addBtn} onClick={sv}>Save</button><button style={S.delBtn} onClick={()=>setAdd(false)}>✕</button></div>}
-  </div>;
+function WeekNav({wo,set,wd}){
+  return (
+    <div style={{display:"flex",alignItems:"center",gap:8,background:"rgba(255,255,255,0.1)",padding:"6px 12px",borderRadius:10}}>
+      <button style={S.wBtn} onClick={()=>set(wo-1)}>‹</button>
+      <span style={{fontSize:14,fontWeight:600,color:P.wh,minWidth:150,textAlign:"center"}}>
+        {fD(wd[0])} — {fD(wd[6])}
+      </span>
+      <button style={S.wBtn} onClick={()=>set(wo+1)}>›</button>
+      {wo!==0&&<button style={{...S.wBtn,fontSize:11,padding:"4px 12px"}} onClick={()=>set(0)}>Today</button>}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── SCHEDULE GRID (clean UX redesign) ────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+function ScheduleGrid({outlet,asgn,setAsgn,staff,wd,allDefs}){
+  const[tt,setTt]=useState(null);
+  if(!outlet.shifts.length) return (
+    <div style={{padding:48,textAlign:"center"}}>
+      <div style={{fontSize:40,marginBottom:12}}>📋</div>
+      <p style={{color:P.gryD,fontSize:15,fontWeight:600}}>No shifts defined for {outlet.name}</p>
+      <p style={{color:P.gry,fontSize:13}}>Go to ⚙️ Settings to add shift times</p>
+    </div>
+  );
+
+  return (
+    <div style={{overflowX:"auto"}}>
+      <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,fontSize:13}}>
+        <thead>
+          <tr>
+            <th style={S.schedTh}></th>
+            {DAYS.map((d,i)=> (
+              <th key={d} style={{...S.schedTh,textAlign:"center"}}>
+                <div style={{fontSize:13,fontWeight:700}}>{d}</div>
+                <div style={{fontSize:11,fontWeight:400,color:P.gry}}>{fD(wd[i])}</div>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {outlet.shifts.map((shift,si)=> {
+            const dur=sDur(shift.startTime,shift.endTime);
+            return (
+              <tr key={shift.id}>
+                {/* Shift label */}
+                <td style={{...S.schedTdLabel,borderTop:si===0?"none":undefined}}>
+                  <div style={{fontWeight:700,fontSize:14,color:P.navy,marginBottom:2}}>{shift.name}</div>
+                  <div style={{fontSize:12,color:P.gry}}>{shift.startTime} – {shift.endTime}</div>
+                  <div style={{fontSize:11,color:P.gry,marginTop:2}}>
+                    {dur.toFixed(1)}h · min {shift.staffNeeded} staff
+                  </div>
+                </td>
+                {/* Day cells */}
+                {DAYS.map((_,di)=>{
+                  const assigned=asgn.filter(a=>a.shiftId===shift.id&&a.dayIndex===di);
+                  const available=staff.filter(s=>!assigned.find(a=>a.staffId===s.id));
+                  const count=assigned.length;
+                  const needed=shift.staffNeeded;
+                  const isFull=count>=needed;
+                  const isEmpty=count===0;
+                  const bg=isFull?P.cellFull:isEmpty?P.cellEmpty:P.cellPartial;
+
+                  return (
+                    <td key={di} style={{...S.schedTd,background:bg,borderTop:si===0?"none":undefined}}>
+                      {/* Coverage bar */}
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                        <span style={{fontSize:12,fontWeight:700,color:isFull?P.grn:isEmpty?P.red:P.org}}>
+                          {count}/{needed}
+                        </span>
+                        {!isFull&&<span style={{fontSize:10,color:P.red,fontWeight:600}}>
+                          {needed-count} open
+                        </span>}
+                      </div>
+                      {/* Assigned staff */}
+                      <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                        {assigned.map(a=>{
+                          const st=staff.find(s=>s.id===a.staffId);
+                          const ct=CT.find(c=>c.id===st?.contractType);
+                          const ws=caoCheck(a.staffId,asgn,allDefs,di);
+                          const hasErr=ws.some(w=>w.type==="error");
+                          return (
+                            <div key={a.id}
+                              style={{
+                                display:"flex",alignItems:"center",gap:6,
+                                padding:"5px 8px",borderRadius:8,
+                                background:hasErr?"rgba(220,38,38,0.06)":P.wh,
+                                border:`1px solid ${hasErr?"rgba(220,38,38,0.2)":P.gryM}`,
+                                transition:"all 0.15s",
+                              }}
+                              onMouseEnter={e=>{if(ws.length)setTt({x:e.clientX,y:e.clientY+12,w:ws});}}
+                              onMouseLeave={()=>setTt(null)}
+                            >
+                              <span style={{fontSize:11}} title={ct?.label}>{ct?.icon}</span>
+                              <span style={{flex:1,fontSize:13,fontWeight:500,color:P.navy}}>
+                                {st?.name?.split(" ")[0]}
+                              </span>
+                              {hasErr&&<span style={{fontSize:11}}>⚠️</span>}
+                              <button onClick={()=>setAsgn(asgn.filter(x=>x.id!==a.id))}
+                                style={{border:"none",background:"none",color:P.gry,cursor:"pointer",fontSize:13,padding:0,lineHeight:1}}>×</button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {/* Assign dropdown */}
+                      {!isFull&&available.length>0&&(
+                        <select
+                          style={{
+                            width:"100%",marginTop:4,padding:"5px 6px",
+                            border:`1.5px dashed ${P.gryM}`,borderRadius:8,
+                            background:"transparent",fontSize:12,color:P.gry,
+                            cursor:"pointer",outline:"none",
+                          }}
+                          value=""
+                          onChange={e=>{if(e.target.value)setAsgn([...asgn,{id:gid(),shiftId:shift.id,dayIndex:di,staffId:e.target.value}]);}}
+                        >
+                          <option value="">+ assign staff</option>
+                          {available.map(s=>{
+                            const ct2=CT.find(c=>c.id===s.contractType);
+                            return <option key={s.id} value={s.id}>{ct2?.icon} {s.name}</option>;
+                          })}
+                        </select>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {/* Tooltip */}
+      {tt&&(
+        <div style={{
+          position:"fixed",left:Math.min(tt.x+12,window.innerWidth-300),top:tt.y,
+          background:P.navy,color:P.wh,padding:"12px 16px",borderRadius:12,
+          fontSize:12,zIndex:9999,maxWidth:300,lineHeight:1.6,
+          boxShadow:"0 8px 30px rgba(0,0,0,0.3)",
+        }}>
+          <div style={{fontWeight:700,color:P.acc,marginBottom:6}}>⚠ CAO Compliance</div>
+          {tt.w.map((w,i)=> <div key={i}>{w.type==="error"?"🔴":"🔵"} {w.msg}</div>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Shift Manager (settings) ───────────────────────────────────────────
+function ShiftManager({outlet,onUp}){
+  const[adding,setAdding]=useState(false);
+  const[name,setName]=useState(""),[start,setStart]=useState(""),[end,setEnd]=useState(""),[need,setNeed]=useState(1);
+
+  const save=()=>{
+    if(!name.trim()||!start||!end)return;
+    onUp({...outlet,shifts:[...outlet.shifts,{id:gid(),name:name.trim(),startTime:start,endTime:end,staffNeeded:+need}]});
+    setAdding(false);setName("");setStart("");setEnd("");setNeed(1);
+  };
+
+  return (
+    <div style={{marginBottom:20}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <h4 style={{margin:0,color:P.navy,fontSize:16}}>{outlet.name}</h4>
+        <button style={S.btnPrimary} onClick={()=>setAdding(true)}>+ Add Shift</button>
+      </div>
+
+      {outlet.shifts.length===0&&!adding&&(
+        <div style={{padding:24,background:P.gryL,borderRadius:12,textAlign:"center"}}>
+          <p style={{color:P.gry,fontSize:14}}>No shifts defined. Click "+ Add Shift" to create custom shift times.</p>
+        </div>
+      )}
+
+      {/* Existing shifts */}
+      <div style={{display:"grid",gap:8}}>
+        {outlet.shifts.map(s=> (
+          <div key={s.id} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",background:P.gryL,borderRadius:10,flexWrap:"wrap"}}>
+            <input style={{...S.inp,width:130,fontWeight:600}} value={s.name}
+              onChange={e=>onUp({...outlet,shifts:outlet.shifts.map(x=>x.id===s.id?{...x,name:e.target.value}:x)})}/>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <input type="time" style={{...S.inp,width:110}} value={s.startTime}
+                onChange={e=>onUp({...outlet,shifts:outlet.shifts.map(x=>x.id===s.id?{...x,startTime:e.target.value}:x)})}/>
+              <span style={{color:P.gry}}>→</span>
+              <input type="time" style={{...S.inp,width:110}} value={s.endTime}
+                onChange={e=>onUp({...outlet,shifts:outlet.shifts.map(x=>x.id===s.id?{...x,endTime:e.target.value}:x)})}/>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <span style={{fontSize:12,color:P.gry}}>Min staff:</span>
+              <input type="number" min={1} style={{...S.inp,width:55,textAlign:"center"}} value={s.staffNeeded}
+                onChange={e=>onUp({...outlet,shifts:outlet.shifts.map(x=>x.id===s.id?{...x,staffNeeded:+e.target.value}:x)})}/>
+            </div>
+            <span style={{fontSize:12,color:P.gry,marginLeft:"auto"}}>{sDur(s.startTime,s.endTime).toFixed(1)}h</span>
+            <button style={{...S.btnIcon,color:P.red}} onClick={()=>onUp({...outlet,shifts:outlet.shifts.filter(x=>x.id!==s.id)})}>✕</button>
+          </div>
+        ))}
+      </div>
+
+      {/* Add form */}
+      {adding&&(
+        <div style={{marginTop:8,padding:16,background:P.accSoft,borderRadius:12,border:`1px solid ${P.acc}30`}}>
+          <p style={{margin:"0 0 10px",fontSize:13,fontWeight:700,color:P.navy}}>New Shift</p>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+            <input style={{...S.inp,width:140}} placeholder="Shift name (e.g. Morning)" value={name} onChange={e=>setName(e.target.value)} autoFocus/>
+            <input type="time" style={{...S.inp,width:110}} value={start} onChange={e=>setStart(e.target.value)} placeholder="Start"/>
+            <span style={{color:P.gry}}>→</span>
+            <input type="time" style={{...S.inp,width:110}} value={end} onChange={e=>setEnd(e.target.value)} placeholder="End"/>
+            <div style={{display:"flex",alignItems:"center",gap:4}}>
+              <span style={{fontSize:12,color:P.gry}}>Min staff:</span>
+              <input type="number" min={1} style={{...S.inp,width:55,textAlign:"center"}} value={need} onChange={e=>setNeed(e.target.value)}/>
+            </div>
+            <button style={S.btnPrimary} onClick={save}>Save</button>
+            <button style={S.btnGhost} onClick={()=>setAdding(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Employee Week View ─────────────────────────────────────────────────
-function EmpView({staff,asgn,depts,wd}){const allS=depts.flatMap(d=>d.outlets.flatMap(o=>o.shifts.map(s=>({...s,outletName:o.name}))));const my=asgn.filter(a=>a.staffId===staff.id);let wt=0;my.forEach(a=>{const s=allS.find(x=>x.id===a.shiftId);if(s)wt+=sDur(s.startTime,s.endTime);});
-  return <div><div style={{marginBottom:20,padding:16,background:P.accDim,borderRadius:12,border:`1px solid ${P.acc}40`}}><h3 style={{margin:"0 0 4px",color:P.navy}}>{staff.name}</h3><p style={{margin:0,fontSize:13,color:P.gryD}}>This week: <strong>{wt.toFixed(1)}h</strong></p></div>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:8}}>{DAYS.map((d,i)=>{const da=my.filter(a=>a.dayIndex===i),isT=wd[i]?.toDateString()===new Date().toDateString();return <div key={d} style={{...S.dayCard,...(isT?{borderColor:P.acc,background:P.accDim}:{})}}><div style={{fontWeight:700,fontSize:13,color:P.navy}}>{d}</div><div style={{fontSize:11,color:P.gry,marginBottom:8}}>{fD(wd[i])}</div>{!da.length?<div style={{fontSize:12,color:P.gry,fontStyle:"italic"}}>Off</div>:da.map(a=>{const sh=allS.find(x=>x.id===a.shiftId);if(!sh)return null;return <div key={a.id} style={S.empCard}><div style={{fontWeight:700,fontSize:12,color:P.navy}}>{sh.name}</div><div style={{fontSize:11,color:P.gry}}>{sh.outletName}</div><div style={{fontSize:12,fontWeight:600,color:P.acc,marginTop:4}}>{sh.startTime}–{sh.endTime}</div></div>;})}</div>;})}</div></div>;
+function EmpView({staff,asgn,depts,wd}){
+  const allS=depts.flatMap(d=>d.outlets.flatMap(o=>o.shifts.map(s=>({...s,outletName:o.name}))));
+  const my=asgn.filter(a=>a.staffId===staff.id);
+  let wt=0;my.forEach(a=>{const s=allS.find(x=>x.id===a.shiftId);if(s)wt+=sDur(s.startTime,s.endTime);});
+
+  return (
+    <div>
+      <div style={{marginBottom:24,padding:20,background:`linear-gradient(135deg,${P.navy},${P.navyM})`,borderRadius:16,color:P.wh}}>
+        <h2 style={{margin:"0 0 4px",fontFamily:"'Georgia',serif",fontSize:22}}>{staff.name}</h2>
+        <p style={{margin:0,fontSize:14,opacity:0.8}}>This week: <strong style={{color:P.acc}}>{wt.toFixed(1)} hours</strong> scheduled</p>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:10}}>
+        {DAYS.map((d,i)=>{
+          const da=my.filter(a=>a.dayIndex===i);
+          const isToday=wd[i]?.toDateString()===new Date().toDateString();
+          return (
+            <div key={d} style={{
+              padding:14,borderRadius:14,textAlign:"center",minHeight:120,
+              background:isToday?P.accSoft:P.wh,
+              border:`2px solid ${isToday?P.acc:P.gryM}`,
+              transition:"all 0.15s",
+            }}>
+              <div style={{fontWeight:700,fontSize:14,color:P.navy}}>{d}</div>
+              <div style={{fontSize:11,color:P.gry,marginBottom:10}}>{fD(wd[i])}</div>
+              {!da.length
+                ? <div style={{fontSize:13,color:P.gry,fontStyle:"italic",marginTop:12}}>Day off</div>
+                : da.map(a=>{
+                    const sh=allS.find(x=>x.id===a.shiftId);
+                    if(!sh)return null;
+                    return (
+                      <div key={a.id} style={{padding:8,borderRadius:10,background:P.gryL,marginBottom:6,textAlign:"left"}}>
+                        <div style={{fontWeight:700,fontSize:13,color:P.navy}}>{sh.name}</div>
+                        <div style={{fontSize:11,color:P.gry}}>{sh.outletName}</div>
+                        <div style={{fontSize:13,fontWeight:600,color:P.acc,marginTop:4}}>{sh.startTime} – {sh.endTime}</div>
+                      </div>
+                    );
+                  })}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── USERS PANEL ──────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+function UsersPanel({h,upH}){
+  const[addDM,setAddDM]=useState(false);
+  const[dmN,setDmN]=useState(""),[dmE,setDmE]=useState(""),[dmP,setDmP]=useState(""),[dmD,setDmD]=useState({});
+  const[editId,setEditId]=useState(null),[editD,setEditD]=useState({});
+  const[saving,setSaving]=useState(false),[msg,setMsg]=useState("");
+
+  const toggle=(id,obj,set)=>set({...obj,[id]:!obj[id]});
+  const sel=obj=>Object.keys(obj).filter(k=>obj[k]);
+
+  const saveDM=async()=>{
+    if(!dmN.trim()||!dmE.trim()||!dmP.trim()){setMsg("Name, email and password required.");return;}
+    if(!sel(dmD).length){setMsg("Select at least one department.");return;}
+    setSaving(true);setMsg("");
+    await authCreateUser(dmE.trim().toLowerCase(),dmP);
+    upH("deptManagers",[...(h.deptManagers||[]),{id:gid(),name:dmN.trim(),email:dmE.trim().toLowerCase(),password:dmP,deptIds:sel(dmD)}]);
+    setDmN("");setDmE("");setDmP("");setDmD({});setAddDM(false);setSaving(false);
+    setMsg("✓ Manager created");setTimeout(()=>setMsg(""),3000);
+  };
+
+  return (
+    <div>
+      {msg&&<div style={{padding:10,borderRadius:10,background:msg.startsWith("✓")?P.grnL:P.redL,color:msg.startsWith("✓")?P.grn:P.red,fontSize:13,marginBottom:12,fontWeight:600}}>{msg}</div>}
+
+      {/* Hotel Manager */}
+      <div style={{...S.card,marginBottom:16}}>
+        <h3 style={{margin:"0 0 12px",color:P.navy,fontSize:17}}>👔 Hotel Manager</h3>
+        <div style={{display:"grid",gap:6}}>
+          <div style={S.infoRow}><span style={S.infoLabel}>Name</span><span style={{fontWeight:600}}>{h.hotelManager?.name||"—"}</span></div>
+          <div style={S.infoRow}><span style={S.infoLabel}>Email (login)</span><span style={{fontWeight:600,color:P.blu}}>{h.hotelManager?.email||"—"}</span></div>
+        </div>
+        {h.hotelManager?.email&&<button style={{...S.btnSoft,marginTop:10}} onClick={async()=>{const r=await authSendReset(h.hotelManager.email);alert(r.ok?"Reset email sent!":"Error: "+r.code);}}>📧 Send Password Reset</button>}
+      </div>
+
+      {/* Department Managers */}
+      <div style={{...S.card,marginBottom:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <h3 style={{margin:0,color:P.navy,fontSize:17}}>📋 Department Managers</h3>
+          {!addDM&&<button style={S.btnPrimary} onClick={()=>{setAddDM(true);setDmD({});}}>+ Add Manager</button>}
+        </div>
+
+        {addDM&&(
+          <div style={{padding:20,background:P.accSoft,borderRadius:14,border:`1px solid ${P.acc}30`,marginBottom:16}}>
+            <h4 style={{margin:"0 0 14px",color:P.navy}}>New Department Manager</h4>
+            <div style={{display:"grid",gap:10,marginBottom:14}}>
+              <input style={S.inp} placeholder="Full name" value={dmN} onChange={e=>setDmN(e.target.value)}/>
+              <input style={S.inp} placeholder="Email (used for login)" type="email" value={dmE} onChange={e=>setDmE(e.target.value)}/>
+              <input style={S.inp} placeholder="Password" type="password" value={dmP} onChange={e=>setDmP(e.target.value)}/>
+            </div>
+            <p style={{fontSize:13,fontWeight:700,color:P.navy,margin:"0 0 10px"}}>Assign to departments:</p>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>
+              {(h.departments||[]).map(d=>(
+                <button key={d.id} onClick={()=>toggle(d.id,dmD,setDmD)} style={{
+                  padding:"10px 16px",borderRadius:10,cursor:"pointer",fontSize:14,fontWeight:600,
+                  border:`2px solid ${dmD[d.id]?P.acc:P.gryM}`,
+                  background:dmD[d.id]?P.accSoft:P.wh,color:dmD[d.id]?P.acc:P.gryD,
+                  transition:"all 0.15s",
+                }}>{d.icon} {d.name} {dmD[d.id]&&"✓"}</button>
+              ))}
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button style={{...S.btnPrimary,opacity:saving?.5:1}} onClick={saveDM} disabled={saving}>{saving?"Creating...":"Create Manager"}</button>
+              <button style={S.btnGhost} onClick={()=>{setAddDM(false);setMsg("");}}>Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {!(h.deptManagers||[]).length&&!addDM&&<p style={{color:P.gry,fontSize:14,padding:12}}>No department managers yet.</p>}
+
+        <div style={{display:"grid",gap:10}}>
+          {(h.deptManagers||[]).map(dm=>{
+            const deptNames=(dm.deptIds||[]).map(did=>h.departments.find(d=>d.id===did)).filter(Boolean);
+            const isEdit=editId===dm.id;
+            return (
+              <div key={dm.id} style={{padding:16,borderRadius:12,border:`1px solid ${P.gryM}`,background:P.gryL}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,flexWrap:"wrap"}}>
+                  <div>
+                    <div style={{fontWeight:700,fontSize:15,color:P.navy}}>{dm.name}</div>
+                    <div style={{fontSize:13,color:P.gry,marginTop:2}}>{dm.email||"No email"}</div>
+                    <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
+                      {deptNames.map(d=><Badge key={d.id} color={P.acc} bg={P.accSoft}>{d.icon} {d.name}</Badge>)}
+                      {!deptNames.length&&<Badge color={P.org} bg={P.orgL}>No departments</Badge>}
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                    <button style={S.btnSoft} onClick={()=>{if(isEdit){setEditId(null);}else{setEditId(dm.id);const o={};(dm.deptIds||[]).forEach(id=>{o[id]=true;});setEditD(o);}}}>
+                      {isEdit?"Cancel":"Edit Depts"}
+                    </button>
+                    {dm.email&&<button style={{...S.btnSoft,color:P.blu,background:P.bluL}} onClick={async()=>{const r=await authSendReset(dm.email);alert(r.ok?"Sent!":"Error");}}>📧</button>}
+                    <button style={{...S.btnIcon,color:P.red}} onClick={()=>upH("deptManagers",(h.deptManagers||[]).filter(x=>x.id!==dm.id))}>✕</button>
+                  </div>
+                </div>
+                {isEdit&&(
+                  <div style={{marginTop:12,padding:14,background:P.wh,borderRadius:10,border:`1px solid ${P.gryM}`}}>
+                    <p style={{fontSize:13,fontWeight:600,color:P.navy,margin:"0 0 8px"}}>Departments for {dm.name}:</p>
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+                      {(h.departments||[]).map(d=>(
+                        <button key={d.id} onClick={()=>toggle(d.id,editD,setEditD)} style={{
+                          padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600,
+                          border:`2px solid ${editD[d.id]?P.acc:P.gryM}`,background:editD[d.id]?P.accSoft:P.wh,color:editD[d.id]?P.acc:P.gryD,
+                        }}>{d.icon} {d.name} {editD[d.id]&&"✓"}</button>
+                      ))}
+                    </div>
+                    <button style={S.btnPrimary} onClick={()=>{upH("deptManagers",(h.deptManagers||[]).map(x=>x.id===dm.id?{...x,deptIds:sel(editD)}:x));setEditId(null);}}>Save</button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Staff accounts */}
+      <div style={{...S.card,marginBottom:16}}>
+        <h3 style={{margin:"0 0 8px",color:P.navy,fontSize:17}}>👤 Staff Accounts</h3>
+        <p style={{fontSize:13,color:P.gry,margin:"0 0 12px"}}>With email → reset via email. Without → manager resets manually.</p>
+        <div style={{display:"grid",gap:4,maxHeight:450,overflowY:"auto"}}>
+          {h.staff.map(s=>(
+            <div key={s.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",borderRadius:8,background:P.gryL}}>
+              <span style={{fontSize:13}}><strong>{s.name}</strong>{s.email?<span style={{color:P.blu,marginLeft:6,fontSize:12}}>{s.email}</span>:<span style={{color:P.gry,marginLeft:6,fontSize:12}}>no email</span>}</span>
+              <div style={{display:"flex",gap:4}}>
+                {s.email&&<button style={{...S.btnSoft,fontSize:11,padding:"3px 8px"}} onClick={async()=>{const r=await authSendReset(s.email);alert(r.ok?"Sent!":"Error");}}>📧</button>}
+                <button style={{...S.btnSoft,fontSize:11,padding:"3px 8px",color:P.org,background:P.orgL}} onClick={()=>{const np=prompt("New password for "+s.name+":");if(np)upH("staff",h.staff.map(x=>x.id===s.id?{...x,password:np}:x));}}>Reset PW</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Shared login */}
+      <div style={S.card}>
+        <h3 style={{margin:"0 0 8px",color:P.navy,fontSize:17}}>🔗 Shared Staff Login</h3>
+        <p style={{fontSize:13,color:P.gry,margin:"0 0 10px"}}>One login for all staff. They pick their name after signing in.</p>
+        <div style={{display:"grid",gap:6}}>
+          <div style={S.infoRow}><span style={S.infoLabel}>Username</span><span style={{fontWeight:600}}>{h.staffLogin?.username||"—"}</span></div>
+          <div style={S.infoRow}><span style={S.infoLabel}>Password</span><span style={{fontWeight:600}}>{h.staffLogin?.password||"—"}</span></div>
+        </div>
+        <button style={{...S.btnSoft,marginTop:10}} onClick={()=>{const u=prompt("Username:",h.staffLogin?.username||"");const p=prompt("Password:",h.staffLogin?.password||"");if(u&&p)upH("staffLogin",{username:u,password:p});}}>Edit</button>
+      </div>
+    </div>
+  );
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -157,21 +541,21 @@ function EmpView({staff,asgn,depts,wd}){const allS=depts.flatMap(d=>d.outlets.fl
 // ══════════════════════════════════════════════════════════════════════
 export default function App(){
   const[loading,setLoading]=useState(true);
-  const[system,setSystem]=useState(null); // {admins,hotels}
-  const[hotelData,setHotelData]=useState({}); // {hotelId: hotelObject}
-  const[user,setUser]=useState(null); // {role,name,email,hotelId,deptIds?}
-  const[curHotel,setCurHotel]=useState(null); // hotelId
+  const[system,setSystem]=useState(null);
+  const[hotelData,setHotelData]=useState({});
+  const[user,setUser]=useState(null);
+  const[curHotel,setCurHotel]=useState(null);
   const[view,setView]=useState("schedule");
   const[selDept,setSelDept]=useState("");
   const[selOut,setSelOut]=useState("");
   const[wo,setWo]=useState(0);
-  const[pm,setPm]=useState(null);
-  const[pd,setPd]=useState(0);
-  const[staffPick,setStaffPick]=useState(null); // for staff login name picker
+  const[staffPick,setStaffPick]=useState(null);
+  const[loginErr,setLoginErr]=useState("");
+  const[loginLoading,setLoginLoading]=useState(false);
 
   const wd=useMemo(()=>weekDatesFor(wo),[wo]);
 
-  // ── Load from storage ──
+  // ── Load ──
   useEffect(()=>{(async()=>{
     let sys=await dbGet("system");
     if(!sys){
@@ -179,52 +563,25 @@ export default function App(){
       sys={admins:[{id:"adm-1",name:"Tim Browne",email:"browne.t@buas.nl",password:"admin123"}],hotels:[{id:"test",name:"Test Hotel"}]};
       await dbSet("system",sys);
       await dbSet("hotel:test",testHotel);
-      // Register auth accounts for users with email
       await authCreateUser("browne.t@buas.nl","admin123");
       await authCreateUser("sarah@test.com","manager1");
       await authCreateUser("jan@test.com","manager1");
-      // Register staff with email
       for(const s of testHotel.staff){if(s.email)await authCreateUser(s.email,"welcome1");}
     }
-    // Always ensure test hotel exists in system list
-    if(!sys.hotels.find(h=>h.id==="test")){
-      sys.hotels.push({id:"test",name:"Test Hotel"});
-      await dbSet("system",sys);
-    }
-    // Always ensure test hotel DATA exists in Firestore
+    if(!sys.hotels.find(h=>h.id==="test")){sys.hotels.push({id:"test",name:"Test Hotel"});await dbSet("system",sys);}
     let testData=await dbGet("hotel:test");
-    if(!testData){
-      const testHotel=buildTestHotel();
-      await dbSet("hotel:test",testHotel);
-      await authCreateUser("sarah@test.com","manager1");
-      await authCreateUser("jan@test.com","manager1");
-      for(const s of testHotel.staff){if(s.email)await authCreateUser(s.email,"welcome1");}
-      testData=testHotel;
-    }
+    if(!testData){const t=buildTestHotel();await dbSet("hotel:test",t);testData=t;
+      await authCreateUser("sarah@test.com","manager1");await authCreateUser("jan@test.com","manager1");
+      for(const s of t.staff){if(s.email)await authCreateUser(s.email,"welcome1");}}
     setSystem(sys);
-    const hd={};
-    for(const hMeta of sys.hotels){
-      const d=await dbGet("hotel:"+hMeta.id);
-      if(d){
-        hd[hMeta.id]=d;
-      }
-    }
-    // Ensure test hotel is always in loaded data
-    if(!hd["test"]&&testData) hd["test"]=testData;
-    setHotelData(hd);
-    setLoading(false);
+    const hd={};for(const hMeta of sys.hotels){const d=await dbGet("hotel:"+hMeta.id);if(d)hd[hMeta.id]=d;}
+    if(!hd["test"]&&testData)hd["test"]=testData;
+    setHotelData(hd);setLoading(false);
   })();},[]);
 
-  // ── Save helpers ──
   const saveSystem=useCallback(async(s)=>{setSystem(s);await dbSet("system",s);},[]);
-  const saveHotel=useCallback(async(hid,data)=>{
-    // Track last activity
-    const withTimestamp={...data,lastActivity:new Date().toISOString()};
-    setHotelData(prev=>({...prev,[hid]:withTimestamp}));
-    await dbSet("hotel:"+hid,withTimestamp);
-  },[]);
+  const saveHotel=useCallback(async(hid,data)=>{const d={...data,lastActivity:new Date().toISOString()};setHotelData(prev=>({...prev,[hid]:d}));await dbSet("hotel:"+hid,d);},[]);
 
-  // ── Current hotel data ──
   const h=curHotel?hotelData[curHotel]:null;
   const allDefs=h?h.departments.flatMap(d=>d.outlets.flatMap(o=>o.shifts)):[];
   const cDept=h?h.departments.find(d=>d.id===selDept):null;
@@ -232,410 +589,312 @@ export default function App(){
   const visibleDepts=h?(user?.deptIds?h.departments.filter(d=>user.deptIds.includes(d.id)):h.departments):[];
   const outStaff=h&&cOut?h.staff.filter(s=>s.outletId===cOut.id):[];
   const outAsgn=h&&cOut?h.assignments.filter(a=>cOut.shifts.find(s=>s.id===a.shiftId)):[];
+  const recs=useMemo(()=>h?genRecs(h.staff,h.assignments,h.departments):{summary:{ftRatio:0,totalFTScheduled:0,totalPTScheduled:0,totalExScheduled:0,totalScheduled:0,totalFTCapacity:0},staffHours:{}},[h]);
 
-  const recs=useMemo(()=>h?genRecs(h.staff,h.assignments,h.departments,h.forecast||{},h.segments||[]):{underutilizedFT:[],swapSuggestions:[],uncoveredFTSuggestions:[],overstaffed:[],utilization:{fulltime:[],parttime:[],extra:[]},summary:{totalFTCapacity:0,totalFTScheduled:0,totalPTScheduled:0,totalExScheduled:0,totalScheduled:0,ftRatio:0},staffHours:{}},[h]);
-
-  // ── Update helpers for current hotel ──
-  const upH=(field,val)=>{if(!h||!curHotel)return;const nd={...h,[field]:val};saveHotel(curHotel,nd);};
+  const upH=(field,val)=>{if(!h||!curHotel)return;saveHotel(curHotel,{...h,[field]:val});};
   const upOut=(did,u)=>upH("departments",h.departments.map(d=>d.id===did?{...d,outlets:d.outlets.map(o=>o.id===u.id?u:o)}:d));
-  const setAsgn=(v)=>upH("assignments",v);
+  const setAsgn=v=>upH("assignments",v);
 
-  // ── Login handler (async — Firebase Auth + Firestore fallback) ──
-  const[loginErr,setLoginErr]=useState("");
-  const[loginLoading,setLoginLoading]=useState(false);
-
-  const handleLogin=async(email,pw)=>{
-    if(!system){setLoginErr("System loading...");return;}
-    setLoginLoading(true);setLoginErr("");
-    const e=email.toLowerCase().trim();
-
-    // Try Firebase Auth first (for accounts with email)
-    if(e.includes("@")){
-      const authResult=await authLogin(e,pw);
-      if(authResult.ok){
-        const found=findRoleByEmail(e);
-        if(found){applyRole(found);setLoginLoading(false);return;}
-        setLoginErr("Account exists but no role assigned.");setLoginLoading(false);return;
-      }
-    }
-
-    // Firestore fallback (for staff without email — login with name/username)
-    for(const hMeta of system.hotels){const hd=hotelData[hMeta.id];if(!hd?.staff)continue;
-      const st=hd.staff.find(s=>((s.username||s.name||"").toLowerCase()===e)&&s.password===pw);
-      if(st){setUser({role:"staff",name:st.name,email:st.email||"",hotelId:hMeta.id,staffId:st.id});setCurHotel(hMeta.id);setStaffPick(st);setLoginLoading(false);return;}}
-    // Also check shared staff login as fallback
-    for(const hMeta of system.hotels){const hd=hotelData[hMeta.id];if(!hd?.staffLogin)continue;
-      if((hd.staffLogin.username||"").toLowerCase()===e&&hd.staffLogin.password===pw){setUser({role:"staff",name:"Staff",hotelId:hMeta.id});setCurHotel(hMeta.id);setLoginLoading(false);return;}}
-
-    setLoginErr("Invalid email or password");setLoginLoading(false);
-  };
-
-  // ── Role lookup by email ──
-  const findRoleByEmail=(e)=>{
+  // ── Role lookup ──
+  const findRole=e=>{
     const adm=system.admins.find(a=>(a.email||"").toLowerCase()===e);
     if(adm)return {role:"admin",name:adm.name,email:adm.email,id:adm.id};
-    for(const hMeta of system.hotels){const hd=hotelData[hMeta.id];if(!hd)continue;
-      if((hd.hotelManager?.email||"").toLowerCase()===e)return {role:"hotelManager",name:hd.hotelManager.name,email:hd.hotelManager.email,hotelId:hMeta.id,hd};}
-    for(const hMeta of system.hotels){const hd=hotelData[hMeta.id];if(!hd?.deptManagers)continue;
+    for(const hM of system.hotels){const hd=hotelData[hM.id];if(!hd)continue;
+      if((hd.hotelManager?.email||"").toLowerCase()===e)return {role:"hotelManager",name:hd.hotelManager.name,email:hd.hotelManager.email,hotelId:hM.id,hd};}
+    for(const hM of system.hotels){const hd=hotelData[hM.id];if(!hd?.deptManagers)continue;
       const dm=hd.deptManagers.find(m=>(m.email||"").toLowerCase()===e);
-      if(dm)return {role:"deptManager",name:dm.name,email:dm.email,hotelId:hMeta.id,deptIds:dm.deptIds||[],hd};}
-    for(const hMeta of system.hotels){const hd=hotelData[hMeta.id];if(!hd?.staff)continue;
+      if(dm)return {role:"deptManager",name:dm.name,email:dm.email,hotelId:hM.id,deptIds:dm.deptIds||[],hd};}
+    for(const hM of system.hotels){const hd=hotelData[hM.id];if(!hd?.staff)continue;
       const st=hd.staff.find(s=>(s.email||"").toLowerCase()===e);
-      if(st)return {role:"staff",name:st.name,email:st.email,hotelId:hMeta.id,staffId:st.id,staff:st};}
+      if(st)return {role:"staff",name:st.name,email:st.email,hotelId:hM.id,staffId:st.id,staff:st};}
     return null;
   };
+  const applyRole=f=>{
+    setUser({role:f.role,name:f.name,email:f.email,id:f.id,hotelId:f.hotelId,deptIds:f.deptIds,staffId:f.staffId});
+    if(f.hotelId){setCurHotel(f.hotelId);if(f.hd)dbSet("hotel:"+f.hotelId,{...f.hd,lastLogin:new Date().toISOString()});
+      const hd=f.hd||hotelData[f.hotelId];if(hd){const fd=f.deptIds?hd.departments.find(d=>f.deptIds.includes(d.id)):hd.departments[0];if(fd){setSelDept(fd.id);setSelOut(fd.outlets?.[0]?.id||"");}}
+      if(f.staff)setStaffPick(f.staff);}
+  };
 
-  const applyRole=(found)=>{
-    setUser({role:found.role,name:found.name,email:found.email,id:found.id,hotelId:found.hotelId,deptIds:found.deptIds,staffId:found.staffId});
-    if(found.hotelId){
-      setCurHotel(found.hotelId);
-      if(found.hd)dbSet("hotel:"+found.hotelId,{...found.hd,lastLogin:new Date().toISOString()});
-      const hd=found.hd||hotelData[found.hotelId];
-      if(hd){const fd=found.deptIds?hd.departments.find(d=>found.deptIds.includes(d.id)):hd.departments[0];if(fd){setSelDept(fd.id);setSelOut(fd.outlets?.[0]?.id||"");}}
-      if(found.staff)setStaffPick(found.staff);
-    }
+  // ── Login ──
+  const handleLogin=async(email,pw)=>{
+    if(!system)return;setLoginLoading(true);setLoginErr("");
+    const e=email.toLowerCase().trim();
+    if(e.includes("@")){const r=await authLogin(e,pw);if(r.ok){const f=findRole(e);if(f){applyRole(f);setLoginLoading(false);return;}setLoginErr("No role assigned to this account.");setLoginLoading(false);return;}}
+    for(const hM of system.hotels){const hd=hotelData[hM.id];if(!hd?.staff)continue;
+      const st=hd.staff.find(s=>((s.username||s.name||"").toLowerCase()===e)&&s.password===pw);
+      if(st){setUser({role:"staff",name:st.name,hotelId:hM.id,staffId:st.id});setCurHotel(hM.id);setStaffPick(st);setLoginLoading(false);return;}}
+    for(const hM of system.hotels){const hd=hotelData[hM.id];if(!hd?.staffLogin)continue;
+      if((hd.staffLogin.username||"").toLowerCase()===e&&hd.staffLogin.password===pw){setUser({role:"staff",name:"Staff",hotelId:hM.id});setCurHotel(hM.id);setLoginLoading(false);return;}}
+    setLoginErr("Invalid email or password");setLoginLoading(false);
   };
 
   const handleForgot=async(email)=>{
     const e=email.toLowerCase().trim();
-    if(!e.includes("@"))return "Please enter an email address";
-    const result=await authSendReset(e);
-    if(result.ok)return null; // success
-    if(result.code==="auth/user-not-found")return "No account found with this email address.";
-    return "Error: "+result.code;
+    if(!e.includes("@"))return "Enter an email address";
+    const r=await authSendReset(e);
+    return r.ok?null:r.code==="auth/user-not-found"?"No account found for this email.":"Error: "+r.code;
   };
 
-  const logout=async()=>{await authLogout();setUser(null);setCurHotel(null);setView("schedule");setPm(null);setStaffPick(null);setLoginErr("");};
+  const logout=async()=>{await authLogout();setUser(null);setCurHotel(null);setView("schedule");setStaffPick(null);setLoginErr("");};
 
   // ── Loading ──
-  if(loading)return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:`linear-gradient(135deg,${P.navy},${P.navyM})`}}><div style={{textAlign:"center",color:P.cream}}><div style={{fontSize:48}}>🏨</div><h1 style={{fontFamily:"'Georgia',serif",color:P.acc}}>ShiftMaster</h1><p>Loading...</p></div></div>;
+  if(loading) return (
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:`linear-gradient(135deg,${P.navy},${P.navyM})`}}>
+      <div style={{textAlign:"center",color:P.wh}}>
+        <div style={{fontSize:56,marginBottom:8}}>🏨</div>
+        <h1 style={{fontFamily:"'Georgia',serif",color:P.acc,fontSize:28,margin:"0 0 8px"}}>ShiftMaster</h1>
+        <p style={{opacity:0.7}}>Loading...</p>
+      </div>
+    </div>
+  );
 
-  // ══════════════════════════════════════════════════════════════════
-  // ── LOGIN SCREEN ───────────────────────────────────────────────────
-  // ══════════════════════════════════════════════════════════════════
-  if(!user){
-    return <LoginScreen onLogin={handleLogin} onForgot={handleForgot} loginErr={loginErr} loginLoading={loginLoading}/>;
-  }
+  // ── Login Screen ──
+  if(!user) return <LoginScreen onLogin={handleLogin} onForgot={handleForgot} err={loginErr} busy={loginLoading}/>;
 
-  // ══════════════════════════════════════════════════════════════════
-  // ── ADMIN VIEW ─────────────────────────────────────────────────────
-  // ══════════════════════════════════════════════════════════════════
-  if(user.role==="admin"&&!curHotel){
-    return <AdminView system={system} saveSystem={saveSystem} hotelData={hotelData} saveHotel={saveHotel} logout={logout} onEnterHotel={async(hid)=>{
-      // Ensure hotel data is loaded
-      let hd=hotelData[hid];
-      if(!hd){hd=await dbGet("hotel:"+hid);if(hd){setHotelData(prev=>({...prev,[hid]:hd}));}}
-      if(!hd){alert("Hotel data not found in database.");return;}
-      // Track last login
-      const updated={...hd,lastLogin:new Date().toISOString()};
-      await dbSet("hotel:"+hid,updated);
-      setHotelData(prev=>({...prev,[hid]:updated}));
-      setCurHotel(hid);
-      const fd=hd.departments?.[0];if(fd){setSelDept(fd.id);setSelOut(fd.outlets?.[0]?.id||"");}
+  // ── Admin ──
+  if(user.role==="admin"&&!curHotel) return <AdminView system={system} saveSystem={saveSystem} hotelData={hotelData} saveHotel={saveHotel} logout={logout}
+    onEnterHotel={async hid=>{let hd=hotelData[hid];if(!hd){hd=await dbGet("hotel:"+hid);if(hd)setHotelData(prev=>({...prev,[hid]:hd}));}if(!hd){alert("Hotel data not found.");return;}
+      await dbSet("hotel:"+hid,{...hd,lastLogin:new Date().toISOString()});setHotelData(prev=>({...prev,[hid]:{...hd,lastLogin:new Date().toISOString()}}));
+      setCurHotel(hid);const fd=hd.departments?.[0];if(fd){setSelDept(fd.id);setSelOut(fd.outlets?.[0]?.id||"");}
     }}/>;
-  }
-  // Admin inside a hotel — treat as hotel manager but with back button
-  if(user.role==="admin"&&curHotel){
-    // Falls through to the hotel manager/dept manager view below
-    // We override isHM to true and add back-to-admin capability
-  }
 
-  // ══════════════════════════════════════════════════════════════════
-  // ── STAFF VIEW ─────────────────────────────────────────────────────
-  // ══════════════════════════════════════════════════════════════════
+  // ── Staff ──
   if(user.role==="staff"){
-    if(!h)return <div style={S.center}><p>Hotel data not found.</p><button style={S.addBtn} onClick={logout}>Back</button></div>;
-    if(!staffPick)return (
-      <div style={S.loginCont}><div style={{...S.loginCard,maxWidth:450}}>
-        <div style={{textAlign:"center",marginBottom:16}}><span style={{fontSize:36}}>🏨</span><h2 style={{margin:"8px 0 0",color:P.navy,fontFamily:"'Georgia',serif"}}>{h.name}</h2><p style={{color:P.gry,fontSize:13}}>Select your name to view your schedule</p></div>
-        <div style={{display:"grid",gap:6,width:"100%",maxHeight:400,overflowY:"auto"}}>
-          {h.staff.map(s=> <button key={s.id} style={{padding:"12px 16px",border:`1px solid ${P.gryL}`,borderRadius:10,background:P.wh,cursor:"pointer",textAlign:"left",fontSize:14,fontWeight:600,color:P.navy,display:"flex",alignItems:"center",gap:8}} onClick={()=>setStaffPick(s)}>
-            <SBadge type={s.contractType} compact/> {s.name}
-          </button>)}
+    if(!h) return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}><p>Hotel not found.</p><button style={S.btnPrimary} onClick={logout}>Back</button></div>;
+    if(!staffPick) return (
+      <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:P.bg,padding:20}}>
+        <div style={{background:P.wh,borderRadius:20,padding:32,width:"100%",maxWidth:420,boxShadow:"0 4px 24px rgba(0,0,0,0.08)"}}>
+          <div style={{textAlign:"center",marginBottom:20}}><span style={{fontSize:40}}>🏨</span><h2 style={{margin:"8px 0 0",color:P.navy,fontFamily:"'Georgia',serif"}}>{h.name}</h2><p style={{color:P.gry,fontSize:14}}>Select your name</p></div>
+          <div style={{display:"grid",gap:6,maxHeight:400,overflowY:"auto"}}>
+            {h.staff.map(s=><button key={s.id} style={{padding:"14px 16px",border:`1.5px solid ${P.gryM}`,borderRadius:12,background:P.wh,cursor:"pointer",textAlign:"left",fontSize:15,fontWeight:600,color:P.navy}} onClick={()=>setStaffPick(s)}>
+              {CT.find(c=>c.id===s.contractType)?.icon} {s.name}
+            </button>)}
+          </div>
+          <button style={{...S.btnGhost,marginTop:12,width:"100%"}} onClick={logout}>← Sign out</button>
         </div>
-        <button style={S.linkBtn} onClick={logout}>← Sign out</button>
-      </div></div>
+      </div>
     );
     return (
-      <div style={S.app}><header style={S.header}><div style={{display:"flex",alignItems:"center",gap:12}}><span style={{fontSize:24}}>🏨</span><div><h1 style={S.hTitle}>ShiftMaster</h1><p style={S.hSub}>{h.name} — {staffPick.name}</p></div></div>
-        <div style={{display:"flex",alignItems:"center",gap:12}}><WNav wo={wo} set={setWo} wd={wd}/><button style={{...S.addBtn,background:P.gryL,color:P.gryD,fontSize:11}} onClick={()=>setStaffPick(null)}>Switch</button><button style={S.logBtn} onClick={logout}>Out</button></div></header>
-        <main style={S.main}><EmpView staff={staffPick} asgn={h.assignments} depts={h.departments} wd={wd}/></main></div>
+      <div style={S.app}>
+        <header style={S.header}><div style={{display:"flex",alignItems:"center",gap:12}}><span style={{fontSize:24}}>🏨</span><div><h1 style={S.hTitle}>ShiftMaster</h1><p style={S.hSub}>{h.name}</p></div></div>
+          <div style={{display:"flex",alignItems:"center",gap:10}}><WeekNav wo={wo} set={setWo} wd={wd}/><button style={S.btnGhostW} onClick={()=>setStaffPick(null)}>Switch</button><button style={S.btnGhostW} onClick={logout}>Out</button></div></header>
+        <main style={S.main}><EmpView staff={staffPick} asgn={h.assignments} depts={h.departments} wd={wd}/></main>
+      </div>
     );
   }
 
   // ══════════════════════════════════════════════════════════════════
-  // ── HOTEL MANAGER / DEPT MANAGER VIEW ──────────────────────────────
+  // ── MANAGER VIEW ───────────────────────────────────────────────────
   // ══════════════════════════════════════════════════════════════════
-  if(!h)return <div style={S.center}><p>Hotel not found.</p><button style={S.addBtn} onClick={logout}>Back</button></div>;
+  if(!h) return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}><p>Hotel not found.</p><button style={S.btnPrimary} onClick={logout}>Back</button></div>;
   const isHM=user.role==="hotelManager"||user.role==="admin";
-  const isAdminInHotel=user.role==="admin"&&!!curHotel;
-  const backToAdmin=()=>{setCurHotel(null);setView("schedule");};
-  const pendReqs=(h.requests||[]).filter(r=>r.status==="pending").length;
-  const issueCount=recs.swapSuggestions.length;
+  const isAdmin=user.role==="admin"&&!!curHotel;
 
-  const navItems=[{id:"schedule",l:"📋 Schedule"}];
-  if(isHM)navItems.push({id:"forecast",l:"📊 Forecast"},{id:"recommend",l:"💡 Optimize"},{id:"requests",l:"📨 Requests"},{id:"hr",l:"🏛️ HR"},{id:"settings",l:"⚙️ Settings"},{id:"staff",l:"👥 Staff"},{id:"users",l:"🔑 Users"});
-  else navItems.push({id:"requests",l:"📨 Requests"},{id:"staff",l:"👥 Staff"});
+  const navItems=[{id:"schedule",l:"Schedule",i:"📋"}];
+  if(isHM)navItems.push({id:"optimize",l:"Optimize",i:"💡"},{id:"hr",l:"HR & Payroll",i:"🏛️"},{id:"settings",l:"Settings",i:"⚙️"},{id:"staff",l:"Staff",i:"👥"},{id:"users",l:"Users",i:"🔑"});
+  else navItems.push({id:"staff",l:"Staff",i:"👥"});
 
   return (
     <div style={S.app}>
-      <header style={S.header}><div style={{display:"flex",alignItems:"center",gap:12}}><span style={{fontSize:24}}>🏨</span><div><h1 style={S.hTitle}>ShiftMaster</h1><p style={S.hSub}>{h.name} — {user.name} ({isAdminInHotel?"Admin":isHM?"Hotel Manager":"Dept Manager"})</p></div></div>
-        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}><WNav wo={wo} set={setWo} wd={wd}/>{isAdminInHotel&&<button style={{...S.addBtn,background:P.pur,fontSize:11}} onClick={backToAdmin}>← All Hotels</button>}<button style={S.logBtn} onClick={logout}>Sign Out</button></div></header>
+      {/* Header */}
+      <header style={S.header}>
+        <div style={{display:"flex",alignItems:"center",gap:14}}>
+          <span style={{fontSize:28}}>🏨</span>
+          <div>
+            <h1 style={S.hTitle}>ShiftMaster</h1>
+            <p style={S.hSub}>{h.name} · {user.name}</p>
+          </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <WeekNav wo={wo} set={setWo} wd={wd}/>
+          {isAdmin&&<button style={{...S.btnPrimary,background:P.pur,fontSize:12}} onClick={()=>{setCurHotel(null);setView("schedule");}}>← All Hotels</button>}
+          <button style={S.btnGhostW} onClick={logout}>Sign Out</button>
+        </div>
+      </header>
 
-      <nav style={S.nav}><div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{navItems.map(v=> <button key={v.id} style={{...S.navBtn,...(view===v.id?S.navBtnA:{}),position:"relative"}} onClick={()=>setView(v.id)}>{v.l}
-        {v.id==="recommend"&&issueCount>0&&<span style={{position:"absolute",top:-4,right:-4,background:P.red,color:P.wh,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:10}}>{issueCount}</span>}
-        {v.id==="requests"&&pendReqs>0&&<span style={{position:"absolute",top:-4,right:-4,background:P.org,color:P.wh,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:10}}>{pendReqs}</span>}
-      </button>)}</div><div style={{display:"flex",gap:4}}>
-        <button style={S.prBtn} onClick={()=>setPm("daily")}>🖨️ Daily</button><button style={S.prBtn} onClick={()=>setPm("staff")}>🖨️ Staff</button>
-      </div></nav>
+      {/* Navigation */}
+      <nav style={S.nav}>
+        <div style={{display:"flex",gap:2}}>
+          {navItems.map(v=>(
+            <button key={v.id} onClick={()=>setView(v.id)} style={{
+              padding:"10px 18px",border:"none",borderRadius:0,cursor:"pointer",fontSize:13,fontWeight:600,
+              background:view===v.id?P.wh:"transparent",color:view===v.id?P.navy:P.gryD,
+              borderBottom:view===v.id?`3px solid ${P.acc}`:"3px solid transparent",
+              transition:"all 0.15s",
+            }}>{v.i} {v.l}</button>
+          ))}
+        </div>
+      </nav>
 
       <main style={S.main}>
-        {/* Dept tabs */}
-        <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
-          {visibleDepts.map(d=> <button key={d.id} style={{...S.deptTab,...(selDept===d.id?S.deptTabA:{})}} onClick={()=>{setSelDept(d.id);setSelOut(d.outlets[0]?.id||"");}}>{d.icon} {d.name}</button>)}
-        </div>
-
-        {/* Outlet tabs */}
-        {cDept&&cDept.outlets.length>1&&<div style={{display:"flex",gap:4,marginBottom:16,flexWrap:"wrap"}}>
-          {cDept.outlets.map(o=> <button key={o.id} style={{...S.outTab,...(selOut===o.id?S.outTabA:{})}} onClick={()=>setSelOut(o.id)}>{o.name}</button>)}
-        </div>}
-
-        {/* SCHEDULE */}
-        {view==="schedule"&&cOut&&<div style={S.card}>
-          <h3 style={{margin:"0 0 12px",color:P.navy}}>{cOut.name} — Schedule</h3>
-          <Grid outlet={cOut} asgn={outAsgn} setAsgn={na=>{const others=h.assignments.filter(a=>!cOut.shifts.find(s=>s.id===a.shiftId));setAsgn([...others,...na]);}} staff={outStaff} wd={wd} allDefs={allDefs} fc={h.forecast||{}} segs={h.segments||[]} deptId={selDept}/>
-        </div>}
-
-        {/* FORECAST */}
-        {view==="forecast"&&isHM&&<div style={S.card}>
-          <h3 style={{margin:"0 0 12px",color:P.navy}}>📊 Forecast — {cDept?.icon} {cDept?.name}</h3>
-          <p style={{fontSize:12,color:P.gry}}>Configure forecast data, capture rates, and handling capacity per outlet in the Forecast settings. Coming in next update.</p>
-        </div>}
-
-        {/* OPTIMIZE */}
-        {view==="recommend"&&isHM&&<div style={S.card}>
-          <h3 style={{margin:"0 0 12px",color:P.navy}}>💡 Schedule Health — FT Ratio: {recs.summary.ftRatio}%</h3>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginBottom:16}}>
-            <div style={S.statCard}><div style={{fontSize:28,fontWeight:800,color:recs.summary.ftRatio>=80?P.grn:P.org}}>{recs.summary.ftRatio}%</div><div style={{fontSize:12}}>FT coverage</div></div>
-            <div style={S.statCard}><div style={{fontSize:28,fontWeight:800,color:P.grn}}>{recs.summary.totalFTScheduled.toFixed(0)}h</div><div style={{fontSize:12}}>FT hours</div></div>
-            <div style={S.statCard}><div style={{fontSize:28,fontWeight:800,color:P.org}}>{recs.summary.totalPTScheduled.toFixed(0)}h</div><div style={{fontSize:12}}>PT hours</div></div>
-            <div style={S.statCard}><div style={{fontSize:28,fontWeight:800,color:P.red}}>{recs.summary.totalExScheduled.toFixed(0)}h</div><div style={{fontSize:12}}>Flex hours</div></div>
-          </div>
-          {recs.swapSuggestions.length>0&&<div><h4 style={{color:P.pur}}>🔄 {recs.swapSuggestions.length} swap opportunities (PT/Extra → FT)</h4>
-            {recs.swapSuggestions.slice(0,6).map((sg,i)=> <div key={i} style={S.recRow}><strong>{DAYS[sg.dayIndex]}</strong> — {sg.shift.name}: replace {sg.currentStaff.name} with {sg.candidates[0]?.name}</div>)}
-          </div>}
-        </div>}
-
-        {/* REQUESTS */}
-        {view==="requests"&&<div style={S.card}>
-          <h3 style={{margin:"0 0 12px",color:P.navy}}>📨 Requests ({pendReqs} pending)</h3>
-          {(h.requests||[]).filter(r=>r.status==="pending").map(r=>{const st=h.staff.find(s=>s.id===r.staffId);const rt=REQ_TYPES.find(t=>t.id===r.type)||REQ_TYPES[0];return (
-            <div key={r.id} style={{padding:14,borderRadius:10,border:`1px solid ${P.gryL}`,background:P.bg,marginBottom:8,borderLeft:`4px solid ${rt.color}`}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
-                <div><strong>{st?.name}</strong> — {rt.icon} {rt.label}: {r.startDate}{r.startDate!==r.endDate&&` → ${r.endDate}`}<div style={{fontSize:12,color:P.gry}}>{r.reason}</div></div>
-                <div style={{display:"flex",gap:6}}><button onClick={()=>upH("requests",h.requests.map(x=>x.id===r.id?{...x,status:"approved"}:x))} style={{padding:"6px 14px",border:"none",borderRadius:8,background:P.grnL,color:P.grn,cursor:"pointer",fontWeight:700,fontSize:12}}>✓ Approve</button>
-                  <button onClick={()=>upH("requests",h.requests.map(x=>x.id===r.id?{...x,status:"denied"}:x))} style={{padding:"6px 14px",border:"none",borderRadius:8,background:P.redL,color:P.red,cursor:"pointer",fontWeight:700,fontSize:12}}>✗ Deny</button></div>
-              </div></div>);})}
-          {!pendReqs&&<p style={{color:P.gry,textAlign:"center",padding:16}}>All caught up!</p>}
-        </div>}
-
-        {/* HR */}
-        {view==="hr"&&isHM&&<div style={S.card}>
-          <h3 style={{margin:"0 0 12px",color:P.navy}}>🏛️ HR — Payroll Overview</h3>
-          <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-            <thead><tr><th style={S.fcTh}>Employee</th><th style={S.fcTh}>Type</th><th style={S.fcTh}>€/hr</th><th style={S.fcTh}>Hours</th><th style={S.fcTh}>Gross/mo</th><th style={S.fcTh}>Net/mo</th><th style={S.fcTh}>Employer/mo</th><th style={S.fcTh}>Cost/hr</th></tr></thead>
-            <tbody>{h.staff.map(s=>{let hrs=0;h.assignments.filter(a=>a.staffId===s.id).forEach(a=>{const d=allDefs.find(x=>x.id===a.shiftId);if(d)hrs+=sDur(d.startTime,d.endTime);});const p=calcPay(s,hrs);const ct=CT.find(c=>c.id===s.contractType);
-              return <tr key={s.id}><td style={S.fcTd}><strong>{s.name}</strong></td><td style={S.fcTd}>{ct?.icon}</td><td style={S.fcTd}>{euro(p.rate)}</td><td style={S.fcTd}>{p.hrs.toFixed(1)}</td><td style={S.fcTd}>{euro(p.mG)}</td><td style={{...S.fcTd,color:P.grn,fontWeight:700}}>{euro(p.mN)}</td><td style={{...S.fcTd,color:P.navy,fontWeight:700}}>{euro(p.tcM)}</td><td style={S.fcTd}>{p.cph>0?euro(p.cph):"—"}</td></tr>;})}</tbody>
-          </table></div>
-        </div>}
-
-        {/* SETTINGS */}
-        {view==="settings"&&isHM&&<div>
-          <div style={{...S.card,marginBottom:16}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><h3 style={{margin:0,color:P.navy}}>🏢 Departments & Outlets</h3>
-              <button style={S.addBtn} onClick={()=>{const nm=prompt("Department name:");if(!nm?.trim())return;const ic=prompt("Emoji icon:")||"🏢";const nd={id:gid(),name:nm.trim(),icon:ic.trim(),outlets:[]};upH("departments",[...h.departments,nd]);setSelDept(nd.id);}}>+ Department</button></div>
-            {h.departments.map(dept=> <div key={dept.id} style={{padding:12,borderRadius:10,border:`1px solid ${P.gryL}`,background:P.bg,marginBottom:8}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                <span style={{fontWeight:700}}>{dept.icon} {dept.name} ({dept.outlets.length} outlets)</span>
-                <div style={{display:"flex",gap:4}}>
-                  <button style={{...S.addBtn,fontSize:11,padding:"4px 8px"}} onClick={()=>{const nm=prompt("Outlet name:");if(!nm?.trim())return;upH("departments",h.departments.map(d=>d.id===dept.id?{...d,outlets:[...d.outlets,{id:gid(),name:nm.trim(),shifts:[],captureRates:{},handlingCapacity:{}}]}:d));}}>+ Outlet</button>
-                  {!["fo","fb"].includes(dept.id)&&<button style={S.delBtn} onClick={()=>{if(confirm("Delete "+dept.name+"?"))upH("departments",h.departments.filter(d=>d.id!==dept.id));}}>✕</button>}
-                </div></div>
-              <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{dept.outlets.map(o=> <span key={o.id} style={{padding:"3px 8px",borderRadius:6,background:P.wh,border:`1px solid ${P.gryL}`,fontSize:12}}>{o.name} <button style={{border:"none",background:"none",color:P.red,cursor:"pointer",fontSize:11}} onClick={()=>upH("departments",h.departments.map(d=>d.id===dept.id?{...d,outlets:d.outlets.filter(x=>x.id!==o.id)}:d))}>✕</button></span>)}</div>
-            </div>)}
-          </div>
-          {cDept&&<div style={S.card}><h3 style={{margin:"0 0 12px",color:P.navy}}>{cDept.icon} {cDept.name} — Shifts</h3>
-            {cDept.outlets.map(o=> <ShiftDefs key={o.id} outlet={o} onUp={u=>upOut(cDept.id,u)}/>)}
-          </div>}
-        </div>}
-
-        {/* STAFF */}
-        {view==="staff"&&<div style={S.card}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><h3 style={{margin:0,color:P.navy}}>👥 Staff</h3>
-            <button style={S.addBtn} onClick={async()=>{const nm=prompt("Staff name:");if(!nm?.trim())return;const em=prompt("Email (optional, for password reset):")||"";const pw=prompt("Password:")||"welcome1";const oid=prompt("Outlet ID (e.g. fo-desk, fb-rest):")||"";if(em)await authCreateUser(em,pw);upH("staff",[...h.staff,{id:gid(),name:nm.trim(),email:em,password:pw,outletId:oid,contractType:"fulltime",contractHours:38,hourlyRate:13.68}]);}}>+ Add</button></div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:8}}>
-            {(user.deptIds?h.staff.filter(s=>{const o=h.departments.flatMap(d=>d.outlets).find(o2=>o2.id===s.outletId);return o&&user.deptIds.includes(h.departments.find(d=>d.outlets.some(o3=>o3.id===o.id))?.id);}):h.staff).map(s=>{const o=h.departments.flatMap(d=>d.outlets.map(o2=>({...o2,deptName:d.name}))).find(x=>x.id===s.outletId);return (
-              <div key={s.id} style={S.staffCard}><div style={{flex:1}}><div style={{display:"flex",alignItems:"center",gap:6}}><SBadge type={s.contractType}/><strong style={{color:P.navy}}>{s.name}</strong></div>
-                <div style={{fontSize:11,color:P.gry,marginTop:2}}>{o?`${o.deptName} → ${o.name}`:""} {s.contractHours>0&&`· ${s.contractHours}h/wk`} {s.email&&`· ${s.email}`}</div></div>
-                {isHM&&<button style={S.delBtn} onClick={()=>upH("staff",h.staff.filter(x=>x.id!==s.id))}>✕</button>}
-              </div>);})}
-          </div>
-        </div>}
-
-        {/* USERS (hotel manager only) */}
-        {view==="users"&&isHM&&<UsersPanel h={h} upH={upH} authCreateUser={authCreateUser} authSendReset={authSendReset}/>}
-      </main>
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════
-// ── USERS PANEL (proper forms, no prompts) ───────────────────────────
-// ══════════════════════════════════════════════════════════════════════
-function UsersPanel({h,upH,authCreateUser,authSendReset}){
-  const[addDM,setAddDM]=useState(false);
-  const[dmName,setDmName]=useState(""),[dmEmail,setDmEmail]=useState(""),[dmPw,setDmPw]=useState(""),[dmDepts,setDmDepts]=useState({});
-  const[editDM,setEditDM]=useState(null),[editDepts,setEditDepts]=useState({});
-  const[saving,setSaving]=useState(false);
-  const[msg,setMsg]=useState("");
-
-  const toggleDept=(id,obj,setObj)=>setObj({...obj,[id]:!obj[id]});
-  const selectedDeptIds=(obj)=>Object.keys(obj).filter(k=>obj[k]);
-
-  const saveDeptManager=async()=>{
-    if(!dmName.trim()||!dmEmail.trim()||!dmPw.trim()){setMsg("Name, email and password are required.");return;}
-    const dids=selectedDeptIds(dmDepts);
-    if(!dids.length){setMsg("Select at least one department.");return;}
-    setSaving(true);setMsg("");
-    const authR=await authCreateUser(dmEmail.trim().toLowerCase(),dmPw);
-    if(!authR.ok&&authR.code!=="auth/email-already-in-use"){setMsg("Auth error: "+(authR.msg||authR.code));setSaving(false);return;}
-    upH("deptManagers",[...(h.deptManagers||[]),{id:gid(),name:dmName.trim(),email:dmEmail.trim().toLowerCase(),password:dmPw,deptIds:dids}]);
-    setDmName("");setDmEmail("");setDmPw("");setDmDepts({});setAddDM(false);setSaving(false);setMsg("Department manager created successfully!");
-    setTimeout(()=>setMsg(""),3000);
-  };
-
-  const updateDeptAssignment=(dmId)=>{
-    const dids=selectedDeptIds(editDepts);
-    upH("deptManagers",(h.deptManagers||[]).map(x=>x.id===dmId?{...x,deptIds:dids}:x));
-    setEditDM(null);setEditDepts({});
-  };
-
-  return (
-    <div>
-      {msg&&<div style={{padding:10,borderRadius:8,background:msg.includes("error")?P.redL:P.grnL,color:msg.includes("error")?P.red:P.grn,fontSize:13,marginBottom:12}}>{msg}</div>}
-
-      {/* Hotel Manager */}
-      <div style={{...S.card,marginBottom:16}}>
-        <h4 style={{color:P.navy,margin:"0 0 12px"}}>👔 Hotel Manager</h4>
-        <div style={{display:"grid",gap:4}}>
-          <div style={S.profRow}><span style={S.profL}>Name</span><span>{h.hotelManager?.name||"—"}</span></div>
-          <div style={S.profRow}><span style={S.profL}>Email (login)</span><span style={{fontWeight:600}}>{h.hotelManager?.email||"—"}</span></div>
-        </div>
-        {h.hotelManager?.email&&<button style={{...S.addBtn,background:P.bluL,color:P.blu,marginTop:8,fontSize:12}} onClick={async()=>{const r=await authSendReset(h.hotelManager.email);alert(r.ok?"Reset email sent!":"Error: "+r.code);}}>📧 Send Password Reset Email</button>}
-      </div>
-
-      {/* Department Managers */}
-      <div style={{...S.card,marginBottom:16}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-          <h4 style={{color:P.navy,margin:0}}>📋 Department Managers</h4>
-          {!addDM&&<button style={S.addBtn} onClick={()=>{setAddDM(true);setDmDepts({});}}>+ Add Department Manager</button>}
-        </div>
-
-        {/* Add form */}
-        {addDM&&<div style={{padding:16,background:P.accDim,borderRadius:12,border:`1px solid ${P.acc}40`,marginBottom:16}}>
-          <h5 style={{margin:"0 0 12px",color:P.navy}}>New Department Manager</h5>
-          <div style={{display:"grid",gap:8,marginBottom:12}}>
-            <input style={S.input} placeholder="Full name" value={dmName} onChange={e=>setDmName(e.target.value)}/>
-            <input style={S.input} placeholder="Email address (used for login)" type="email" value={dmEmail} onChange={e=>setDmEmail(e.target.value)}/>
-            <input style={S.input} placeholder="Password" type="password" value={dmPw} onChange={e=>setDmPw(e.target.value)}/>
-          </div>
-          <p style={{fontSize:13,fontWeight:700,color:P.navy,margin:"0 0 8px"}}>Assign to departments:</p>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
-            {(h.departments||[]).map(d=> (
-              <button key={d.id} onClick={()=>toggleDept(d.id,dmDepts,setDmDepts)} style={{
-                padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600,
-                border:`2px solid ${dmDepts[d.id]?P.acc:P.gryL}`,
-                background:dmDepts[d.id]?P.accDim:P.wh,
-                color:dmDepts[d.id]?P.acc:P.gryD,
-              }}>{d.icon} {d.name} {dmDepts[d.id]?"✓":""}</button>
+        {/* Department selector */}
+        {["schedule","settings"].includes(view)&&(
+          <div style={{display:"flex",gap:10,marginBottom:20,flexWrap:"wrap"}}>
+            {visibleDepts.map(d=>(
+              <button key={d.id} onClick={()=>{setSelDept(d.id);setSelOut(d.outlets[0]?.id||"");}} style={{
+                padding:"12px 24px",borderRadius:12,cursor:"pointer",fontSize:15,fontWeight:700,
+                border:`2px solid ${selDept===d.id?P.acc:P.gryM}`,
+                background:selDept===d.id?P.accSoft:P.wh,color:selDept===d.id?P.navy:P.gryD,
+                transition:"all 0.15s",boxShadow:selDept===d.id?"0 2px 8px rgba(230,57,70,0.15)":"none",
+              }}>{d.icon} {d.name}</button>
             ))}
           </div>
-          <div style={{display:"flex",gap:8}}>
-            <button style={{...S.addBtn,opacity:saving?.5:1}} onClick={saveDeptManager} disabled={saving}>{saving?"Creating...":"Create Manager"}</button>
-            <button style={{...S.addBtn,background:P.gryL,color:P.gryD}} onClick={()=>{setAddDM(false);setMsg("");}}>Cancel</button>
-          </div>
-        </div>}
+        )}
 
-        {/* List */}
-        {!(h.deptManagers||[]).length&&!addDM&&<p style={{color:P.gry,fontSize:13}}>No department managers yet.</p>}
-        <div style={{display:"grid",gap:8}}>
-          {(h.deptManagers||[]).map(dm=> {
-            const isEditing=editDM===dm.id;
-            const deptNames=(dm.deptIds||[]).map(did=>h.departments.find(d=>d.id===did)).filter(Boolean);
-            return (
-              <div key={dm.id} style={{padding:14,borderRadius:10,border:`1px solid ${P.gryL}`,background:P.bg}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,flexWrap:"wrap"}}>
-                  <div>
-                    <div style={{fontWeight:700,fontSize:14,color:P.navy}}>{dm.name}</div>
-                    <div style={{fontSize:12,color:P.gry,marginTop:2}}>{dm.email||"No email"}</div>
-                    <div style={{display:"flex",gap:4,marginTop:6,flexWrap:"wrap"}}>
-                      {deptNames.map(d=> <Badge key={d.id} color={P.acc} bg={P.accDim}>{d.icon} {d.name}</Badge>)}
-                      {!deptNames.length&&<Badge color={P.org} bg={P.orgL}>No departments assigned</Badge>}
+        {/* Outlet sub-tabs */}
+        {["schedule"].includes(view)&&cDept&&cDept.outlets.length>1&&(
+          <div style={{display:"flex",gap:6,marginBottom:16}}>
+            {cDept.outlets.map(o=>(
+              <button key={o.id} onClick={()=>setSelOut(o.id)} style={{
+                padding:"8px 18px",borderRadius:10,cursor:"pointer",fontSize:13,fontWeight:600,
+                border:`1.5px solid ${selOut===o.id?P.navy:P.gryM}`,
+                background:selOut===o.id?P.navy:P.wh,color:selOut===o.id?P.wh:P.gryD,
+                transition:"all 0.15s",
+              }}>{o.name}</button>
+            ))}
+          </div>
+        )}
+
+        {/* SCHEDULE */}
+        {view==="schedule"&&cOut&&(
+          <div style={S.card}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+              <div>
+                <h2 style={{margin:0,color:P.navy,fontSize:20}}>{cOut.name}</h2>
+                <p style={{margin:"4px 0 0",color:P.gry,fontSize:13}}>{cDept?.icon} {cDept?.name} · {cOut.shifts.length} shifts defined</p>
+              </div>
+            </div>
+            <ScheduleGrid outlet={cOut} asgn={outAsgn}
+              setAsgn={na=>{const others=h.assignments.filter(a=>!cOut.shifts.find(s=>s.id===a.shiftId));setAsgn([...others,...na]);}}
+              staff={outStaff} wd={wd} allDefs={allDefs}/>
+          </div>
+        )}
+
+        {/* OPTIMIZE */}
+        {view==="optimize"&&isHM&&(
+          <div style={S.card}>
+            <h2 style={{margin:"0 0 20px",color:P.navy,fontSize:20}}>Schedule Health</h2>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:16}}>
+              {[
+                {label:"FT Ratio",value:recs.summary.ftRatio+"%",sub:"Target: ≥80%",color:recs.summary.ftRatio>=80?P.grn:P.org},
+                {label:"Full-time",value:recs.summary.totalFTScheduled.toFixed(0)+"h",sub:`of ${recs.summary.totalFTCapacity}h capacity`,color:P.grn},
+                {label:"Part-time",value:recs.summary.totalPTScheduled.toFixed(0)+"h",sub:"",color:P.org},
+                {label:"Extra/Flex",value:recs.summary.totalExScheduled.toFixed(0)+"h",sub:"",color:P.red},
+              ].map((c,i)=>(
+                <div key={i} style={{padding:24,borderRadius:16,background:P.gryL,textAlign:"center"}}>
+                  <div style={{fontSize:36,fontWeight:800,color:c.color}}>{c.value}</div>
+                  <div style={{fontSize:14,fontWeight:600,color:P.navy,marginTop:4}}>{c.label}</div>
+                  {c.sub&&<div style={{fontSize:12,color:P.gry,marginTop:2}}>{c.sub}</div>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* HR */}
+        {view==="hr"&&isHM&&(
+          <div style={S.card}>
+            <h2 style={{margin:"0 0 16px",color:P.navy,fontSize:20}}>Payroll Overview</h2>
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                <thead><tr style={{background:P.gryL}}>
+                  {["Employee","Type","€/hr","Hours","Gross/mo","Net/mo","Employer/mo","Cost/hr"].map(h2=>(
+                    <th key={h2} style={{padding:"12px 10px",textAlign:"left",fontSize:12,fontWeight:700,color:P.navy,borderBottom:`2px solid ${P.gryM}`}}>{h2}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {h.staff.map(s=>{
+                    let hrs=0;h.assignments.filter(a=>a.staffId===s.id).forEach(a=>{const d=allDefs.find(x=>x.id===a.shiftId);if(d)hrs+=sDur(d.startTime,d.endTime);});
+                    const p=calcPay(s,hrs);const ct=CT.find(c=>c.id===s.contractType);
+                    return (
+                      <tr key={s.id} style={{borderBottom:`1px solid ${P.gryL}`}}>
+                        <td style={{padding:"10px",fontWeight:600,color:P.navy}}>{s.name}</td>
+                        <td style={{padding:"10px"}}>{ct?.icon} {ct?.label}</td>
+                        <td style={{padding:"10px"}}>{euro(p.rate)}</td>
+                        <td style={{padding:"10px"}}>{p.hrs.toFixed(1)}</td>
+                        <td style={{padding:"10px"}}>{euro(p.mG)}</td>
+                        <td style={{padding:"10px",color:P.grn,fontWeight:600}}>{euro(p.mN)}</td>
+                        <td style={{padding:"10px",color:P.navy,fontWeight:600}}>{euro(p.tcM)}</td>
+                        <td style={{padding:"10px"}}>{p.cph>0?euro(p.cph):"—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* SETTINGS */}
+        {view==="settings"&&isHM&&(
+          <div>
+            {/* Departments */}
+            <div style={{...S.card,marginBottom:16}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+                <h2 style={{margin:0,color:P.navy,fontSize:20}}>Departments & Outlets</h2>
+                <button style={S.btnPrimary} onClick={()=>{const nm=prompt("Department name:");if(!nm?.trim())return;const ic=prompt("Emoji icon:")||"🏢";upH("departments",[...h.departments,{id:gid(),name:nm.trim(),icon:ic.trim(),outlets:[]}]);}}>+ Department</button>
+              </div>
+              <div style={{display:"grid",gap:10}}>
+                {h.departments.map(dept=>(
+                  <div key={dept.id} style={{padding:16,borderRadius:12,background:P.gryL,border:`1px solid ${P.gryM}`}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                      <span style={{fontWeight:700,fontSize:16,color:P.navy}}>{dept.icon} {dept.name}</span>
+                      <div style={{display:"flex",gap:6}}>
+                        <button style={S.btnSoft} onClick={()=>{const nm=prompt("Outlet name:");if(nm?.trim())upH("departments",h.departments.map(d=>d.id===dept.id?{...d,outlets:[...d.outlets,{id:gid(),name:nm.trim(),shifts:[],captureRates:{},handlingCapacity:{}}]}:d));}}>+ Outlet</button>
+                        {!["fo","fb"].includes(dept.id)&&<button style={{...S.btnIcon,color:P.red}} onClick={()=>{if(confirm("Delete "+dept.name+"?"))upH("departments",h.departments.filter(d=>d.id!==dept.id));}}>✕</button>}
+                      </div>
+                    </div>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                      {dept.outlets.map(o=>(
+                        <span key={o.id} style={{padding:"6px 12px",borderRadius:8,background:P.wh,border:`1px solid ${P.gryM}`,fontSize:13,fontWeight:500}}>
+                          {o.name} <span style={{color:P.gry}}>({o.shifts.length})</span>
+                          <button style={{border:"none",background:"none",color:P.red,cursor:"pointer",marginLeft:4}} onClick={()=>upH("departments",h.departments.map(d=>d.id===dept.id?{...d,outlets:d.outlets.filter(x=>x.id!==o.id)}:d))}>×</button>
+                        </span>
+                      ))}
                     </div>
                   </div>
-                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                    <button style={{...S.addBtn,background:P.purL,color:P.pur,fontSize:11}} onClick={()=>{if(isEditing){setEditDM(null);}else{setEditDM(dm.id);const obj={};(dm.deptIds||[]).forEach(id=>{obj[id]=true;});setEditDepts(obj);}}}>
-                      {isEditing?"Cancel":"Edit Depts"}
-                    </button>
-                    {dm.email&&<button style={{...S.addBtn,background:P.bluL,color:P.blu,fontSize:11}} onClick={async()=>{const r=await authSendReset(dm.email);alert(r.ok?"Reset email sent!":"Error: "+r.code);}}>📧 Reset</button>}
-                    <button style={{...S.addBtn,background:P.orgL,color:P.org,fontSize:11}} onClick={()=>{const np=prompt("New password for "+dm.name+":");if(np)upH("deptManagers",(h.deptManagers||[]).map(x=>x.id===dm.id?{...x,password:np}:x));}}>Set Password</button>
-                    <button style={S.delBtn} onClick={()=>upH("deptManagers",(h.deptManagers||[]).filter(x=>x.id!==dm.id))}>✕</button>
-                  </div>
-                </div>
-                {/* Edit departments */}
-                {isEditing&&<div style={{marginTop:12,padding:12,background:P.wh,borderRadius:8,border:`1px solid ${P.gryL}`}}>
-                  <p style={{fontSize:12,fontWeight:700,color:P.navy,margin:"0 0 8px"}}>Select departments for {dm.name}:</p>
-                  <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>
-                    {(h.departments||[]).map(d=> (
-                      <button key={d.id} onClick={()=>toggleDept(d.id,editDepts,setEditDepts)} style={{
-                        padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600,
-                        border:`2px solid ${editDepts[d.id]?P.acc:P.gryL}`,background:editDepts[d.id]?P.accDim:P.wh,color:editDepts[d.id]?P.acc:P.gryD,
-                      }}>{d.icon} {d.name} {editDepts[d.id]?"✓":""}</button>
-                    ))}
-                  </div>
-                  <button style={S.addBtn} onClick={()=>updateDeptAssignment(dm.id)}>Save Departments</button>
-                </div>}
+                ))}
               </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Staff Accounts */}
-      <div style={{...S.card,marginBottom:16}}>
-        <h4 style={{color:P.navy,margin:"0 0 8px"}}>👤 Staff Accounts</h4>
-        <p style={{fontSize:12,color:P.gry,margin:"0 0 12px"}}>Staff with email can reset password via email. Without email, a manager can set a new password manually.</p>
-        <div style={{display:"grid",gap:4,maxHeight:400,overflowY:"auto"}}>
-          {h.staff.map(s=> <div key={s.id} style={{...S.profRow,padding:"8px 12px"}}>
-            <span style={{fontSize:13}}><strong>{s.name}</strong> {s.email?<span style={{color:P.blu,fontSize:11}}>({s.email})</span>:<span style={{color:P.gry,fontSize:11}}>(no email)</span>}</span>
-            <div style={{display:"flex",gap:4}}>
-              {s.email&&<button style={{...S.addBtn,background:P.bluL,color:P.blu,fontSize:10,padding:"3px 8px"}} onClick={async()=>{const r=await authSendReset(s.email);alert(r.ok?"Reset email sent to "+s.email:"Error: "+r.code);}}>📧 Reset</button>}
-              <button style={{...S.addBtn,background:P.orgL,color:P.org,fontSize:10,padding:"3px 8px"}} onClick={()=>{const np=prompt("New password for "+s.name+":");if(!np)return;upH("staff",h.staff.map(x=>x.id===s.id?{...x,password:np}:x));alert("Password updated");}}>Set Password</button>
             </div>
-          </div>)}
-        </div>
-      </div>
+            {/* Shift config for selected dept */}
+            {cDept&&(
+              <div style={S.card}>
+                <h2 style={{margin:"0 0 16px",color:P.navy,fontSize:20}}>{cDept.icon} {cDept.name} — Shifts</h2>
+                {cDept.outlets.map(o=><ShiftManager key={o.id} outlet={o} onUp={u=>upOut(cDept.id,u)}/>)}
+              </div>
+            )}
+          </div>
+        )}
 
-      {/* Shared Staff Login */}
-      <div style={S.card}>
-        <h4 style={{color:P.navy,margin:"0 0 8px"}}>🔗 Shared Staff Login</h4>
-        <p style={{fontSize:12,color:P.gry,margin:"0 0 8px"}}>Generic login for all staff. After login they pick their name.</p>
-        <div style={{display:"grid",gap:4}}>
-          <div style={S.profRow}><span style={S.profL}>Username</span><span style={{fontWeight:600}}>{h.staffLogin?.username||"—"}</span></div>
-          <div style={S.profRow}><span style={S.profL}>Password</span><span style={{fontWeight:600}}>{h.staffLogin?.password||"—"}</span></div>
-        </div>
-        <button style={{...S.addBtn,marginTop:8}} onClick={()=>{const u=prompt("Staff username:",h.staffLogin?.username||"staff");const p=prompt("Staff password:",h.staffLogin?.password||"");if(u&&p)upH("staffLogin",{username:u,password:p});}}>Edit Shared Login</button>
-      </div>
+        {/* STAFF */}
+        {view==="staff"&&(
+          <div style={S.card}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+              <h2 style={{margin:0,color:P.navy,fontSize:20}}>Staff</h2>
+              {isHM&&<button style={S.btnPrimary} onClick={async()=>{const nm=prompt("Name:");if(!nm?.trim())return;const em=prompt("Email (optional):")||"";const pw=prompt("Password:")||"welcome1";const oid=prompt("Outlet ID:")||"";if(em)await authCreateUser(em,pw);upH("staff",[...h.staff,{id:gid(),name:nm.trim(),email:em,password:pw,outletId:oid,contractType:"fulltime",contractHours:38,hourlyRate:13.68}]);}}>+ Add</button>}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))",gap:10}}>
+              {h.staff.map(s=>{
+                const ct=CT.find(c=>c.id===s.contractType);
+                const outlet=h.departments.flatMap(d=>d.outlets).find(o=>o.id===s.outletId);
+                return (
+                  <div key={s.id} style={{padding:14,borderRadius:12,border:`1px solid ${P.gryM}`,background:P.gryL,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}><span>{ct?.icon}</span><strong style={{color:P.navy,fontSize:14}}>{s.name}</strong></div>
+                      <div style={{fontSize:12,color:P.gry,marginTop:2}}>{outlet?.name||""} {s.contractHours>0&&`· ${s.contractHours}h/wk`} {s.email&&`· ${s.email}`}</div>
+                    </div>
+                    {isHM&&<button style={{...S.btnIcon,color:P.red}} onClick={()=>upH("staff",h.staff.filter(x=>x.id!==s.id))}>✕</button>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* USERS */}
+        {view==="users"&&isHM&&<UsersPanel h={h} upH={upH}/>}
+      </main>
     </div>
   );
 }
@@ -643,29 +902,32 @@ function UsersPanel({h,upH,authCreateUser,authSendReset}){
 // ══════════════════════════════════════════════════════════════════════
 // ── LOGIN SCREEN ─────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════
-function LoginScreen({onLogin,onForgot,loginErr,loginLoading}){
-  const[email,setEmail]=useState(""),[pw,setPw]=useState(""),[msg,setMsg]=useState(""),[forgot,setForgot]=useState(false),[fEmail,setFEmail]=useState(""),[fErr,setFErr]=useState(""),[fLoading,setFLoading]=useState(false);
-  const submit=()=>{if(!email.trim()||!pw.trim())return;onLogin(email,pw);};
-  const doForgot=async()=>{if(!fEmail.trim())return;setFLoading(true);setFErr("");setMsg("");const e=await onForgot(fEmail);setFLoading(false);if(e){setFErr(e);setMsg("");}else{setMsg("Password reset email sent to "+fEmail+". Check your inbox (and spam folder).");setFErr("");}};
-  if(forgot)return (
-    <div style={S.loginCont}><div style={S.loginCard}>
-      <div style={{textAlign:"center",marginBottom:16}}><span style={{fontSize:46}}>🏨</span><h1 style={S.loginTitle}>ShiftMaster</h1><p style={S.loginSub}>Reset your password</p></div>
-      <p style={{fontSize:13,color:P.gryD,textAlign:"center",margin:"0 0 8px",lineHeight:1.5}}>Enter your email address and we'll send you a reset link.</p>
-      <input style={S.input} placeholder="Email address" type="email" value={fEmail} onChange={e=>{setFEmail(e.target.value);setFErr("");setMsg("");}} onKeyDown={e=>e.key==="Enter"&&doForgot()} autoFocus/>
+function LoginScreen({onLogin,onForgot,err,busy}){
+  const[email,setEmail]=useState(""),[pw,setPw]=useState(""),[forgot,setForgot]=useState(false),[fEmail,setFEmail]=useState(""),[fErr,setFErr]=useState(""),[fMsg,setFMsg]=useState(""),[fBusy,setFBusy]=useState(false);
+
+  if(forgot) return (
+    <div style={S.loginWrap}><div style={S.loginBox}>
+      <div style={{textAlign:"center",marginBottom:20}}><span style={{fontSize:52}}>🏨</span><h1 style={S.loginH1}>ShiftMaster</h1><p style={{color:P.gry,fontSize:14}}>Reset your password</p></div>
+      <input style={S.loginInp} placeholder="Email address" type="email" value={fEmail} onChange={e=>{setFEmail(e.target.value);setFErr("");setFMsg("");}} onKeyDown={e=>e.key==="Enter"&&(async()=>{setFBusy(true);const r=await onForgot(fEmail);setFBusy(false);r?setFErr(r):setFMsg("Reset email sent to "+fEmail);})()}/>
       {fErr&&<p style={{color:P.red,fontSize:13,margin:0}}>{fErr}</p>}
-      {msg&&<div style={{padding:12,borderRadius:10,background:P.grnL,fontSize:13,color:P.grn,textAlign:"center"}}>{msg}</div>}
-      <button style={{...S.primBtn,opacity:fLoading?.5:1}} onClick={doForgot} disabled={fLoading}>{fLoading?"Sending...":"Send Reset Link"}</button>
-      <button style={S.linkBtn} onClick={()=>{setForgot(false);setFErr("");setMsg("");}}>← Back to Sign In</button>
+      {fMsg&&<div style={{padding:12,borderRadius:10,background:P.grnL,color:P.grn,fontSize:13,textAlign:"center"}}>{fMsg}</div>}
+      <button style={{...S.loginBtn,opacity:fBusy?.5:1}} onClick={async()=>{setFBusy(true);const r=await onForgot(fEmail);setFBusy(false);r?setFErr(r):setFMsg("Reset email sent to "+fEmail);}}>{fBusy?"Sending...":"Send Reset Link"}</button>
+      <button style={S.loginLink} onClick={()=>{setForgot(false);setFErr("");setFMsg("");}}>← Back</button>
     </div></div>
   );
+
   return (
-    <div style={S.loginCont}><div style={S.loginCard}>
-      <div style={{textAlign:"center",marginBottom:16}}><span style={{fontSize:46}}>🏨</span><h1 style={S.loginTitle}>ShiftMaster</h1><p style={S.loginSub}>Your schedule; our solution</p></div>
-      <input style={S.input} placeholder="Email or username" value={email} onChange={e=>{setEmail(e.target.value);}} onKeyDown={e=>e.key==="Enter"&&submit()}/>
-      <input style={S.input} placeholder="Password" type="password" value={pw} onChange={e=>{setPw(e.target.value);}} onKeyDown={e=>e.key==="Enter"&&submit()}/>
-      {loginErr&&<p style={{color:P.red,fontSize:13,margin:0}}>{loginErr}</p>}
-      <button style={{...S.primBtn,opacity:loginLoading?.5:1}} onClick={submit} disabled={loginLoading}>{loginLoading?"Signing in...":"Sign In"}</button>
-      <button style={S.linkBtn} onClick={()=>{setForgot(true);setFEmail(email);}}>Forgot password?</button>
+    <div style={S.loginWrap}><div style={S.loginBox}>
+      <div style={{textAlign:"center",marginBottom:20}}>
+        <span style={{fontSize:52}}>🏨</span>
+        <h1 style={S.loginH1}>ShiftMaster</h1>
+        <p style={{color:P.gry,fontSize:14}}>Your schedule; our solution</p>
+      </div>
+      <input style={S.loginInp} placeholder="Email or username" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&onLogin(email,pw)}/>
+      <input style={S.loginInp} placeholder="Password" type="password" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&onLogin(email,pw)}/>
+      {err&&<p style={{color:P.red,fontSize:13,margin:0}}>{err}</p>}
+      <button style={{...S.loginBtn,opacity:busy?.5:1}} onClick={()=>onLogin(email,pw)} disabled={busy}>{busy?"Signing in...":"Sign In"}</button>
+      <button style={S.loginLink} onClick={()=>{setForgot(true);setFEmail(email);}}>Forgot password?</button>
     </div></div>
   );
 }
@@ -675,97 +937,72 @@ function LoginScreen({onLogin,onForgot,loginErr,loginLoading}){
 // ══════════════════════════════════════════════════════════════════════
 function AdminView({system,saveSystem,hotelData,saveHotel,logout,onEnterHotel}){
   const[tab,setTab]=useState("hotels");
-  const addHotel=async()=>{const nm=prompt("Hotel name:");if(!nm?.trim())return;const id=gid();const mgNm=prompt("Hotel manager name:")||"Manager";const em=prompt("Hotel manager email:");const pw=prompt("Hotel manager password:")||"manager1";
-    if(em)await authCreateUser(em,pw);
-    const newHotel={id,name:nm.trim(),hotelManager:{name:mgNm,email:em||"",password:pw},deptManagers:[],staffLogin:{username:"staff",password:"staff123"},staff:[],departments:[{id:"fo",name:"Front Office",icon:"🛎️",outlets:[]},{id:"fb",name:"Food & Beverage",icon:"🍽️",outlets:[]}],assignments:[],segments:SEGS_DEFAULT,forecast:{fo:{},fb:{}},requests:[],reviews:[],warnings:[],lastLogin:new Date().toISOString(),createdAt:new Date().toISOString()};
-    saveSystem({...system,hotels:[...system.hotels,{id,name:nm.trim()}]});saveHotel(id,newHotel);};
-  const delHotel=async(hid)=>{if(!confirm("Delete hotel '"+system.hotels.find(h=>h.id===hid)?.name+"' permanently? All data will be lost."))return;saveSystem({...system,hotels:system.hotels.filter(h=>h.id!==hid)});};
-  const archiveHotel=async(hid)=>{const hd=hotelData[hid];if(!hd)return;saveHotel(hid,{...hd,archived:true,archivedAt:new Date().toISOString()});};
-  const restoreHotel=async(hid)=>{const hd=hotelData[hid];if(!hd)return;saveHotel(hid,{...hd,archived:false,archivedAt:null});};
-  const addAdmin=async()=>{const nm=prompt("Name:");const em=prompt("Email:");const pw=prompt("Password:");if(!nm||!em||!pw)return;await authCreateUser(em,pw);saveSystem({...system,admins:[...system.admins,{id:gid(),name:nm,email:em,password:pw}]});};
-  const sendReset=async(email)=>{if(!email){alert("No email address on this account.");return;}const r=await authSendReset(email);alert(r.ok?"Reset email sent to "+email:"Error: "+(r.code||"unknown"));};
-
-  // Categorize hotels
-  const now=new Date();
-  const THREE_MONTHS=90*24*60*60*1000;
-  const FIVE_YEARS=5*365*24*60*60*1000;
-  const activeHotels=[];const archivedHotels=[];const autoArchive=[];
-  system.hotels.forEach(hMeta=>{
-    const hd=hotelData[hMeta.id];
-    if(!hd){activeHotels.push(hMeta);return;}
-    if(hd.archived){archivedHotels.push(hMeta);return;}
-    const lastAct=hd.lastLogin||hd.lastActivity||hd.createdAt;
-    const inactive=lastAct?now-new Date(lastAct):0;
-    // Auto-archive after 3 months inactive (except test hotel)
-    if(inactive>THREE_MONTHS&&hMeta.id!=="test"){autoArchive.push(hMeta);archivedHotels.push(hMeta);}
-    // Auto-delete after 5 years (would happen on load — for now just flag)
-    else if(inactive>FIVE_YEARS&&hMeta.id!=="test"){/* auto-delete on next cleanup */}
-    else{activeHotels.push(hMeta);}
-  });
-  // Process auto-archives
-  if(autoArchive.length>0){autoArchive.forEach(hMeta=>{const hd=hotelData[hMeta.id];if(hd&&!hd.archived)saveHotel(hMeta.id,{...hd,archived:true,archivedAt:new Date().toISOString(),autoArchived:true});});}
-
-  const formatDate=(d)=>{if(!d)return "Unknown";const dt=new Date(d);return dt.toLocaleDateString("nl-NL",{day:"numeric",month:"short",year:"numeric"});};
-  const daysSince=(d)=>{if(!d)return "?";return Math.floor((now-new Date(d))/(24*60*60*1000));};
-
-  const HotelCard=({hMeta,isArchived})=>{const hd=hotelData[hMeta.id];const lastAct=hd?.lastLogin||hd?.lastActivity||hd?.createdAt;
-    return (
-      <div style={{padding:16,borderRadius:12,border:`1px solid ${isArchived?P.orgL:P.gryL}`,background:isArchived?P.orgL:P.bg,opacity:isArchived?.8:1}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:8}}>
-          <div style={{flex:1}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
-              <h4 style={{margin:0,color:P.navy}}>{hMeta.name}</h4>
-              {hMeta.id==="test"&&<Badge color={P.pur} bg={P.purL}>Demo</Badge>}
-              {isArchived&&<Badge color={P.org} bg={P.orgL}>Archived</Badge>}
-            </div>
-            <div style={{fontSize:12,color:P.gry}}>
-              {hd?`${hd.departments?.length||0} depts · ${hd.staff?.length||0} staff · Manager: ${hd.hotelManager?.email||"—"}`:"Data not loaded"}
-            </div>
-            <div style={{fontSize:11,color:P.gry,marginTop:4}}>
-              Last active: {formatDate(lastAct)} ({daysSince(lastAct)} days ago)
-              {hd?.createdAt&&` · Created: ${formatDate(hd.createdAt)}`}
-            </div>
-          </div>
-          <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-            {!isArchived&&<button style={S.addBtn} onClick={()=>onEnterHotel(hMeta.id)}>Enter →</button>}
-            {isArchived&&<button style={{...S.addBtn,background:P.grnL,color:P.grn}} onClick={()=>restoreHotel(hMeta.id)}>Restore</button>}
-            {!isArchived&&hMeta.id!=="test"&&<button style={{...S.addBtn,background:P.orgL,color:P.org,fontSize:11}} onClick={()=>archiveHotel(hMeta.id)}>Archive</button>}
-            {hMeta.id!=="test"&&<button style={S.delBtn} onClick={()=>delHotel(hMeta.id)}>✕</button>}
-          </div>
-        </div>
-      </div>
-    );
-  };
+  const now=new Date(),THREE_MO=90*24*3600000;
+  const active=[],archived=[];
+  system.hotels.forEach(hM=>{const hd=hotelData[hM.id];if(hd?.archived){archived.push(hM);return;}
+    const la=hd?.lastLogin||hd?.lastActivity||hd?.createdAt;
+    if(la&&now-new Date(la)>THREE_MO&&hM.id!=="test"){archived.push(hM);}else{active.push(hM);}});
 
   return (
     <div style={S.app}>
-      <header style={S.header}><div style={{display:"flex",alignItems:"center",gap:12}}><span style={{fontSize:24}}>🏨</span><div><h1 style={S.hTitle}>ShiftMaster</h1><p style={S.hSub}>System Admin</p></div></div>
-        <button style={S.logBtn} onClick={logout}>Sign Out</button></header>
-      <nav style={S.nav}><div style={{display:"flex",gap:4}}>
-        {[{id:"hotels",l:"🏨 Active Hotels"},{id:"archive",l:"📦 Archive"},{id:"admins",l:"🔒 Admins"}].map(t=> <button key={t.id} style={{...S.navBtn,...(tab===t.id?S.navBtnA:{}),position:"relative"}} onClick={()=>setTab(t.id)}>
-          {t.l}{t.id==="archive"&&archivedHotels.length>0&&<span style={{position:"absolute",top:-4,right:-4,background:P.org,color:P.wh,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:10}}>{archivedHotels.length}</span>}
-        </button>)}
+      <header style={S.header}><div style={{display:"flex",alignItems:"center",gap:14}}><span style={{fontSize:28}}>🏨</span><div><h1 style={S.hTitle}>ShiftMaster</h1><p style={S.hSub}>System Admin</p></div></div>
+        <button style={S.btnGhostW} onClick={logout}>Sign Out</button></header>
+      <nav style={S.nav}><div style={{display:"flex",gap:2}}>
+        {["hotels","archive","admins"].map(t=>(
+          <button key={t} onClick={()=>setTab(t)} style={{padding:"10px 18px",border:"none",borderRadius:0,cursor:"pointer",fontSize:13,fontWeight:600,background:tab===t?P.wh:"transparent",color:tab===t?P.navy:P.gryD,borderBottom:tab===t?`3px solid ${P.acc}`:"3px solid transparent"}}>
+            {t==="hotels"?"🏨 Hotels":t==="archive"?"📦 Archive":"🔒 Admins"}
+          </button>
+        ))}
       </div></nav>
       <main style={S.main}>
         {tab==="hotels"&&<div style={S.card}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><h3 style={{margin:0,color:P.navy}}>🏨 Active Hotels ({activeHotels.length})</h3><button style={S.addBtn} onClick={addHotel}>+ Add Hotel</button></div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+            <h2 style={{margin:0,color:P.navy,fontSize:20}}>Active Hotels</h2>
+            <button style={S.btnPrimary} onClick={async()=>{const nm=prompt("Hotel name:");if(!nm?.trim())return;const id=gid();const mgNm=prompt("Manager name:")||"Manager";const em=prompt("Manager email:");const pw=prompt("Manager password:")||"manager1";if(em)await authCreateUser(em,pw);
+              saveSystem({...system,hotels:[...system.hotels,{id,name:nm.trim()}]});
+              saveHotel(id,{id,name:nm.trim(),hotelManager:{name:mgNm,email:em||"",password:pw},deptManagers:[],staffLogin:{username:"staff",password:"staff123"},staff:[],departments:[{id:"fo",name:"Front Office",icon:"🛎️",outlets:[]},{id:"fb",name:"Food & Beverage",icon:"🍽️",outlets:[]}],assignments:[],segments:SEGS_DEFAULT,forecast:{fo:{},fb:{}},requests:[],reviews:[],warnings:[],lastLogin:new Date().toISOString(),createdAt:new Date().toISOString()});
+            }}>+ Add Hotel</button></div>
           <div style={{display:"grid",gap:12}}>
-            {activeHotels.map(hMeta=> <HotelCard key={hMeta.id} hMeta={hMeta} isArchived={false}/>)}
-            {!activeHotels.length&&<p style={{color:P.gry,textAlign:"center",padding:16}}>No active hotels. Create one above.</p>}
+            {active.map(hM=>{const hd=hotelData[hM.id];return (
+              <div key={hM.id} style={{padding:20,borderRadius:14,border:`1px solid ${P.gryM}`,background:P.gryL}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+                  <div>
+                    <h3 style={{margin:0,color:P.navy,fontSize:18}}>{hM.name}{hM.id==="test"&&<Badge color={P.pur} bg={P.purL}>Demo</Badge>}</h3>
+                    <p style={{margin:"4px 0 0",fontSize:13,color:P.gry}}>{hd?`${hd.departments?.length||0} departments · ${hd.staff?.length||0} staff`:"Loading..."}</p>
+                  </div>
+                  <div style={{display:"flex",gap:6}}>
+                    <button style={S.btnPrimary} onClick={()=>onEnterHotel(hM.id)}>Enter →</button>
+                    {hM.id!=="test"&&<button style={{...S.btnIcon,color:P.red}} onClick={()=>{if(confirm("Delete "+hM.name+"?"))saveSystem({...system,hotels:system.hotels.filter(x=>x.id!==hM.id)});}}>✕</button>}
+                  </div>
+                </div>
+              </div>
+            );})}
           </div>
         </div>}
         {tab==="archive"&&<div style={S.card}>
-          <h3 style={{margin:"0 0 8px",color:P.navy}}>📦 Archived Hotels ({archivedHotels.length})</h3>
-          <p style={{fontSize:12,color:P.gry,margin:"0 0 16px"}}>Hotels inactive for 3+ months are automatically archived. Archived hotels are permanently deleted after 5 years of inactivity.</p>
-          <div style={{display:"grid",gap:12}}>
-            {archivedHotels.map(hMeta=> <HotelCard key={hMeta.id} hMeta={hMeta} isArchived={true}/>)}
-            {!archivedHotels.length&&<p style={{color:P.gry,textAlign:"center",padding:16}}>No archived hotels.</p>}
-          </div>
+          <h2 style={{margin:"0 0 12px",color:P.navy,fontSize:20}}>Archived Hotels</h2>
+          <p style={{color:P.gry,fontSize:13,margin:"0 0 16px"}}>Hotels inactive 3+ months. Auto-deleted after 5 years.</p>
+          {archived.length?archived.map(hM=>(
+            <div key={hM.id} style={{padding:16,borderRadius:12,background:P.orgL,marginBottom:8}}>
+              <strong>{hM.name}</strong>
+              <button style={{...S.btnSoft,marginLeft:10}} onClick={()=>{const hd=hotelData[hM.id];if(hd)saveHotel(hM.id,{...hd,archived:false});}}>Restore</button>
+            </div>
+          )):<p style={{color:P.gry}}>No archived hotels.</p>}
         </div>}
         {tab==="admins"&&<div style={S.card}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><h3 style={{margin:0,color:P.navy}}>🔒 System Admins</h3>
-            <button style={S.addBtn} onClick={addAdmin}>+ Add Admin</button></div>
-          {system.admins.map(a=> <div key={a.id} style={{...S.profRow,marginBottom:6}}><span><strong>{a.name}</strong> — {a.email}</span><div style={{display:"flex",gap:4}}><button style={{...S.addBtn,background:P.bluL,color:P.blu,fontSize:11}} onClick={()=>sendReset(a.email)}>Send Reset</button>{system.admins.length>1&&<button style={S.delBtn} onClick={()=>saveSystem({...system,admins:system.admins.filter(x=>x.id!==a.id)})}>✕</button>}</div></div>)}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+            <h2 style={{margin:0,color:P.navy,fontSize:20}}>System Admins</h2>
+            <button style={S.btnPrimary} onClick={async()=>{const nm=prompt("Name:");const em=prompt("Email:");const pw=prompt("Password:");if(!nm||!em||!pw)return;await authCreateUser(em,pw);saveSystem({...system,admins:[...system.admins,{id:gid(),name:nm,email:em,password:pw}]});}}>+ Add</button>
+          </div>
+          {system.admins.map(a=>(
+            <div key={a.id} style={{...S.infoRow,marginBottom:6}}>
+              <span><strong>{a.name}</strong> — {a.email}</span>
+              <div style={{display:"flex",gap:4}}>
+                <button style={S.btnSoft} onClick={async()=>{const r=await authSendReset(a.email);alert(r.ok?"Sent!":"Error");}}>📧</button>
+                {system.admins.length>1&&<button style={{...S.btnIcon,color:P.red}} onClick={()=>saveSystem({...system,admins:system.admins.filter(x=>x.id!==a.id)})}>✕</button>}
+              </div>
+            </div>
+          ))}
         </div>}
       </main>
     </div>
@@ -776,49 +1013,50 @@ function AdminView({system,saveSystem,hotelData,saveHotel,logout,onEnterHotel}){
 // ── STYLES ───────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════
 const S={
-  loginCont:{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:`linear-gradient(135deg,${P.navy} 0%,${P.navyL} 50%,${P.navyM} 100%)`,padding:20},
-  loginCard:{background:P.wh,borderRadius:20,padding:"40px 32px",width:"100%",maxWidth:380,display:"flex",flexDirection:"column",alignItems:"center",gap:12,boxShadow:"0 20px 60px rgba(0,0,0,.3)"},
-  loginTitle:{margin:"8px 0 0",fontSize:28,fontWeight:800,color:P.navy,letterSpacing:"-.5px",fontFamily:"'Georgia',serif"},
-  loginSub:{margin:"4px 0 0",fontSize:13,color:P.gry},
-  input:{width:"100%",padding:"12px 14px",border:`1.5px solid ${P.gryL}`,borderRadius:10,fontSize:14,outline:"none",boxSizing:"border-box"},
-  primBtn:{width:"100%",padding:12,border:"none",borderRadius:10,background:P.navy,color:P.acc,fontSize:15,fontWeight:700,cursor:"pointer",marginTop:4},
-  linkBtn:{background:"none",border:"none",color:P.gry,cursor:"pointer",fontSize:13,marginTop:4},
-  app:{minHeight:"100vh",background:P.bg,fontFamily:"'Segoe UI',system-ui,-apple-system,sans-serif"},
-  header:{background:P.navy,padding:"14px 24px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12},
-  hTitle:{margin:0,fontSize:20,fontWeight:800,color:P.acc,fontFamily:"'Georgia',serif"},
-  hSub:{margin:0,fontSize:12,color:P.cream,opacity:.7},
-  wBtn:{padding:"4px 10px",border:`1px solid ${P.acc}`,borderRadius:6,background:"transparent",color:P.acc,cursor:"pointer",fontSize:14,fontWeight:700},
-  logBtn:{padding:"6px 14px",border:"1px solid rgba(255,255,255,.2)",borderRadius:6,background:"transparent",color:P.cream,cursor:"pointer",fontSize:12},
-  nav:{background:P.wh,padding:"8px 24px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:`1px solid ${P.gryL}`,flexWrap:"wrap",gap:8},
-  navBtn:{padding:"8px 16px",border:"none",borderRadius:8,background:"transparent",color:P.gryD,cursor:"pointer",fontSize:13,fontWeight:600},
-  navBtnA:{background:P.navy,color:P.acc},
-  prBtn:{padding:"6px 12px",border:`1px solid ${P.gryL}`,borderRadius:6,background:P.wh,color:P.gryD,cursor:"pointer",fontSize:12,fontWeight:600},
-  main:{padding:24,maxWidth:1300,margin:"0 auto"},
-  card:{background:P.wh,borderRadius:16,padding:20,boxShadow:"0 1px 4px rgba(0,0,0,.06)",border:`1px solid ${P.gryL}`},
-  center:{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12},
-  deptTab:{padding:"10px 20px",border:`2px solid ${P.gryL}`,borderRadius:10,background:P.wh,color:P.gryD,cursor:"pointer",fontSize:14,fontWeight:700},
-  deptTabA:{borderColor:P.acc,background:P.accDim,color:P.navy},
-  outTab:{padding:"6px 14px",border:`1.5px solid ${P.gryL}`,borderRadius:8,background:P.wh,color:P.gryD,cursor:"pointer",fontSize:13,fontWeight:600,display:"flex",alignItems:"center"},
-  outTabA:{borderColor:P.navy,background:P.navy,color:P.acc},
-  th:{padding:"10px 8px",textAlign:"center",fontSize:12,fontWeight:700,color:P.navy,borderBottom:`2px solid ${P.gryL}`,background:P.bg},
-  td:{padding:6,verticalAlign:"top",borderBottom:`1px solid ${P.gryL}`,borderRight:`1px solid ${P.gryL}`,minWidth:120},
-  tdL:{padding:"10px 8px",verticalAlign:"top",borderBottom:`1px solid ${P.gryL}`,background:P.bg},
-  chip:{display:"flex",alignItems:"center",gap:4,padding:"3px 6px",marginBottom:3,borderRadius:6,background:P.wh,border:`1px solid ${P.gryL}`,fontSize:12},
-  chipRm:{border:"none",background:"transparent",color:P.gry,cursor:"pointer",fontSize:10,padding:"0 2px"},
-  asSel:{width:"100%",padding:"3px 4px",border:`1px dashed ${P.gry}`,borderRadius:6,background:"transparent",fontSize:11,color:P.gry,cursor:"pointer"},
-  shiftEd:{padding:16,background:P.bg,borderRadius:12,marginBottom:12,border:`1px solid ${P.gryL}`},
-  shRow:{display:"flex",alignItems:"center",gap:8,padding:8,marginBottom:6,borderRadius:8,border:`1px solid ${P.gryL}`,background:P.wh,flexWrap:"wrap"},
-  shInp:{padding:"6px 8px",border:`1px solid ${P.gryL}`,borderRadius:6,fontSize:13,outline:"none"},
-  mini:{display:"flex",alignItems:"center",gap:4,fontSize:11,color:P.gry,fontWeight:600},
-  addBtn:{padding:"6px 14px",border:"none",borderRadius:6,background:P.acc,color:P.wh,cursor:"pointer",fontSize:12,fontWeight:700},
-  delBtn:{padding:"4px 8px",border:"none",borderRadius:4,background:"transparent",color:P.red,cursor:"pointer",fontSize:14,fontWeight:700},
-  staffCard:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:12,borderRadius:10,border:`1px solid ${P.gryL}`,background:P.bg,gap:8},
-  dayCard:{padding:12,borderRadius:12,border:`1.5px solid ${P.gryL}`,background:P.wh,textAlign:"center",minHeight:100},
-  empCard:{padding:8,borderRadius:8,background:P.bg,marginBottom:6,border:`1px solid ${P.gryL}`},
-  statCard:{padding:16,borderRadius:12,background:P.bg,border:`1px solid ${P.gryL}`,textAlign:"center"},
-  recRow:{padding:"10px 14px",borderRadius:10,border:`1px solid ${P.gryL}`,background:P.bg,marginBottom:6,fontSize:13},
-  fcTh:{padding:"8px 10px",textAlign:"left",fontSize:12,fontWeight:700,color:P.navy,borderBottom:`2px solid ${P.gryL}`,background:P.bg},
-  fcTd:{padding:"6px 10px",borderBottom:`1px solid ${P.gryL}`,fontSize:12},
-  profRow:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",borderRadius:8,background:P.bg,border:`1px solid ${P.gryL}`,marginBottom:4},
-  profL:{fontSize:12,fontWeight:600,color:P.gry},
+  // App shell
+  app:{minHeight:"100vh",background:P.bg,fontFamily:"'Inter','Segoe UI',system-ui,-apple-system,sans-serif"},
+  header:{background:`linear-gradient(135deg,${P.navy},${P.navyM})`,padding:"16px 28px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:14},
+  hTitle:{margin:0,fontSize:22,fontWeight:800,color:P.acc,fontFamily:"'Georgia',serif",letterSpacing:"-0.3px"},
+  hSub:{margin:0,fontSize:12,color:"rgba(255,255,255,0.6)"},
+  nav:{background:P.wh,padding:"0 28px",borderBottom:`1px solid ${P.gryM}`,display:"flex",justifyContent:"space-between",alignItems:"center"},
+  main:{padding:"24px 28px",maxWidth:1400,margin:"0 auto"},
+
+  // Cards
+  card:{background:P.card,borderRadius:16,padding:24,boxShadow:"0 1px 3px rgba(0,0,0,0.04)",border:`1px solid ${P.gryM}`},
+
+  // Buttons
+  btnPrimary:{padding:"8px 18px",border:"none",borderRadius:10,background:P.acc,color:P.wh,cursor:"pointer",fontSize:13,fontWeight:700,transition:"opacity 0.15s"},
+  btnSoft:{padding:"6px 14px",border:`1px solid ${P.gryM}`,borderRadius:8,background:P.gryL,color:P.gryD,cursor:"pointer",fontSize:12,fontWeight:600},
+  btnGhost:{padding:"8px 18px",border:`1.5px solid ${P.gryM}`,borderRadius:10,background:"transparent",color:P.gryD,cursor:"pointer",fontSize:13,fontWeight:600},
+  btnGhostW:{padding:"6px 14px",border:"1px solid rgba(255,255,255,0.2)",borderRadius:8,background:"transparent",color:"rgba(255,255,255,0.8)",cursor:"pointer",fontSize:12,fontWeight:500},
+  btnIcon:{border:"none",background:"transparent",cursor:"pointer",fontSize:16,fontWeight:700,padding:"4px 8px"},
+  wBtn:{padding:"5px 12px",border:"1px solid rgba(255,255,255,0.3)",borderRadius:8,background:"transparent",color:P.wh,cursor:"pointer",fontSize:15,fontWeight:700},
+
+  // Inputs
+  inp:{padding:"10px 14px",border:`1.5px solid ${P.gryM}`,borderRadius:10,fontSize:14,outline:"none",background:P.wh,boxSizing:"border-box",width:"100%"},
+
+  // Info rows
+  infoRow:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px",borderRadius:10,background:P.gryL,border:`1px solid ${P.gryM}`},
+  infoLabel:{fontSize:13,fontWeight:600,color:P.gry},
+
+  // Schedule grid
+  schedTh:{padding:"10px 12px",fontSize:13,fontWeight:700,color:P.navy,borderBottom:`2px solid ${P.gryM}`,background:P.gryL,textAlign:"left"},
+  schedTd:{padding:"10px 8px",verticalAlign:"top",borderBottom:`1px solid ${P.gryL}`,borderRight:`1px solid ${P.gryL}`,minWidth:140},
+  schedTdLabel:{padding:"12px 14px",verticalAlign:"top",borderBottom:`1px solid ${P.gryL}`,background:P.gryL,minWidth:160},
+
+  // Login
+  loginWrap:{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:`linear-gradient(135deg,${P.navy} 0%,${P.navyL} 50%,${P.navyM} 100%)`,padding:20},
+  loginBox:{background:P.wh,borderRadius:24,padding:"44px 36px",width:"100%",maxWidth:400,display:"flex",flexDirection:"column",alignItems:"center",gap:14,boxShadow:"0 20px 60px rgba(0,0,0,0.25)"},
+  loginH1:{margin:"10px 0 0",fontSize:30,fontWeight:800,color:P.navy,fontFamily:"'Georgia',serif",letterSpacing:"-0.5px"},
+  loginInp:{width:"100%",padding:"14px 16px",border:`1.5px solid ${P.gryM}`,borderRadius:12,fontSize:15,outline:"none",boxSizing:"border-box",transition:"border 0.2s"},
+  loginBtn:{width:"100%",padding:14,border:"none",borderRadius:12,background:P.navy,color:P.acc,fontSize:16,fontWeight:700,cursor:"pointer"},
+  loginLink:{background:"none",border:"none",color:P.gry,cursor:"pointer",fontSize:13},
+
+  // Misc
+  dayCard:{padding:14,borderRadius:14,border:`2px solid ${P.gryM}`,background:P.wh,textAlign:"center",minHeight:120},
+  empCard:{padding:8,borderRadius:10,background:P.gryL,marginBottom:6,textAlign:"left",border:`1px solid ${P.gryM}`},
+  chip:{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",borderRadius:8,background:P.wh,border:`1px solid ${P.gryM}`,fontSize:13},
+  profRow:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px",borderRadius:10,background:P.gryL,border:`1px solid ${P.gryM}`,marginBottom:4},
+  profL:{fontSize:13,fontWeight:600,color:P.gry},
+  statCard:{padding:24,borderRadius:16,background:P.gryL,textAlign:"center"},
 };
