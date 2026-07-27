@@ -483,47 +483,159 @@ export default function App(){
         </div>}
 
         {/* USERS (hotel manager only) */}
-        {view==="users"&&isHM&&<div style={S.card}>
-          <h3 style={{margin:"0 0 16px",color:P.navy}}>🔑 Hotel Access Management</h3>
-          <div style={{marginBottom:20}}>
-            <h4 style={{color:P.navy,margin:"0 0 8px"}}>👔 Hotel Manager</h4>
-            <div style={S.profRow}><span style={S.profL}>Name</span><span>{h.hotelManager?.name||"—"}</span></div>
-            <div style={S.profRow}><span style={S.profL}>Email</span><span>{h.hotelManager?.email||"—"}</span></div>
-            {h.hotelManager?.email&&<button style={{...S.addBtn,background:P.bluL,color:P.blu,marginTop:6,fontSize:11}} onClick={async()=>{const r=await authSendReset(h.hotelManager.email);alert(r.ok?"Reset email sent!":"Error: "+r.code);}}>Send Password Reset Email</button>}
+        {view==="users"&&isHM&&<UsersPanel h={h} upH={upH} authCreateUser={authCreateUser} authSendReset={authSendReset}/>}
+      </main>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── USERS PANEL (proper forms, no prompts) ───────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+function UsersPanel({h,upH,authCreateUser,authSendReset}){
+  const[addDM,setAddDM]=useState(false);
+  const[dmName,setDmName]=useState(""),[dmEmail,setDmEmail]=useState(""),[dmPw,setDmPw]=useState(""),[dmDepts,setDmDepts]=useState({});
+  const[editDM,setEditDM]=useState(null),[editDepts,setEditDepts]=useState({});
+  const[saving,setSaving]=useState(false);
+  const[msg,setMsg]=useState("");
+
+  const toggleDept=(id,obj,setObj)=>setObj({...obj,[id]:!obj[id]});
+  const selectedDeptIds=(obj)=>Object.keys(obj).filter(k=>obj[k]);
+
+  const saveDeptManager=async()=>{
+    if(!dmName.trim()||!dmEmail.trim()||!dmPw.trim()){setMsg("Name, email and password are required.");return;}
+    const dids=selectedDeptIds(dmDepts);
+    if(!dids.length){setMsg("Select at least one department.");return;}
+    setSaving(true);setMsg("");
+    const authR=await authCreateUser(dmEmail.trim().toLowerCase(),dmPw);
+    if(!authR.ok&&authR.code!=="auth/email-already-in-use"){setMsg("Auth error: "+(authR.msg||authR.code));setSaving(false);return;}
+    upH("deptManagers",[...(h.deptManagers||[]),{id:gid(),name:dmName.trim(),email:dmEmail.trim().toLowerCase(),password:dmPw,deptIds:dids}]);
+    setDmName("");setDmEmail("");setDmPw("");setDmDepts({});setAddDM(false);setSaving(false);setMsg("Department manager created successfully!");
+    setTimeout(()=>setMsg(""),3000);
+  };
+
+  const updateDeptAssignment=(dmId)=>{
+    const dids=selectedDeptIds(editDepts);
+    upH("deptManagers",(h.deptManagers||[]).map(x=>x.id===dmId?{...x,deptIds:dids}:x));
+    setEditDM(null);setEditDepts({});
+  };
+
+  return (
+    <div>
+      {msg&&<div style={{padding:10,borderRadius:8,background:msg.includes("error")?P.redL:P.grnL,color:msg.includes("error")?P.red:P.grn,fontSize:13,marginBottom:12}}>{msg}</div>}
+
+      {/* Hotel Manager */}
+      <div style={{...S.card,marginBottom:16}}>
+        <h4 style={{color:P.navy,margin:"0 0 12px"}}>👔 Hotel Manager</h4>
+        <div style={{display:"grid",gap:4}}>
+          <div style={S.profRow}><span style={S.profL}>Name</span><span>{h.hotelManager?.name||"—"}</span></div>
+          <div style={S.profRow}><span style={S.profL}>Email (login)</span><span style={{fontWeight:600}}>{h.hotelManager?.email||"—"}</span></div>
+        </div>
+        {h.hotelManager?.email&&<button style={{...S.addBtn,background:P.bluL,color:P.blu,marginTop:8,fontSize:12}} onClick={async()=>{const r=await authSendReset(h.hotelManager.email);alert(r.ok?"Reset email sent!":"Error: "+r.code);}}>📧 Send Password Reset Email</button>}
+      </div>
+
+      {/* Department Managers */}
+      <div style={{...S.card,marginBottom:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <h4 style={{color:P.navy,margin:0}}>📋 Department Managers</h4>
+          {!addDM&&<button style={S.addBtn} onClick={()=>{setAddDM(true);setDmDepts({});}}>+ Add Department Manager</button>}
+        </div>
+
+        {/* Add form */}
+        {addDM&&<div style={{padding:16,background:P.accDim,borderRadius:12,border:`1px solid ${P.acc}40`,marginBottom:16}}>
+          <h5 style={{margin:"0 0 12px",color:P.navy}}>New Department Manager</h5>
+          <div style={{display:"grid",gap:8,marginBottom:12}}>
+            <input style={S.input} placeholder="Full name" value={dmName} onChange={e=>setDmName(e.target.value)}/>
+            <input style={S.input} placeholder="Email address (used for login)" type="email" value={dmEmail} onChange={e=>setDmEmail(e.target.value)}/>
+            <input style={S.input} placeholder="Password" type="password" value={dmPw} onChange={e=>setDmPw(e.target.value)}/>
           </div>
-          <div style={{marginBottom:20}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><h4 style={{color:P.navy,margin:0}}>📋 Department Managers</h4>
-              <button style={S.addBtn} onClick={async()=>{const nm=prompt("Name:");const em=prompt("Email:");const pw=prompt("Password:");const dids=prompt("Department IDs (comma-sep, e.g. fo,fb):");if(!nm||!pw)return;if(em)await authCreateUser(em,pw);upH("deptManagers",[...(h.deptManagers||[]),{id:gid(),name:nm,email:em||"",password:pw,deptIds:(dids||"").split(",").map(x=>x.trim())}]);}}>+ Add</button></div>
-            {(h.deptManagers||[]).map(dm=> <div key={dm.id} style={{...S.profRow,marginBottom:4}}>
-              <span><strong>{dm.name}</strong> {dm.email&&`(${dm.email})`} — Depts: {(dm.deptIds||[]).join(", ")}</span>
-              <div style={{display:"flex",gap:4}}>
-                {dm.email&&<button style={{...S.addBtn,background:P.bluL,color:P.blu,fontSize:10,padding:"3px 8px"}} onClick={async()=>{const r=await authSendReset(dm.email);alert(r.ok?"Reset email sent!":"Error: "+r.code);}}>Reset</button>}
-                {!dm.email&&<button style={{...S.addBtn,background:P.orgL,color:P.org,fontSize:10,padding:"3px 8px"}} onClick={()=>{const np=prompt("New password for "+dm.name+":");if(np)upH("deptManagers",(h.deptManagers||[]).map(x=>x.id===dm.id?{...x,password:np}:x));}}>Set Password</button>}
-                <button style={S.delBtn} onClick={()=>upH("deptManagers",(h.deptManagers||[]).filter(x=>x.id!==dm.id))}>✕</button>
-              </div>
-            </div>)}
+          <p style={{fontSize:13,fontWeight:700,color:P.navy,margin:"0 0 8px"}}>Assign to departments:</p>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
+            {(h.departments||[]).map(d=> (
+              <button key={d.id} onClick={()=>toggleDept(d.id,dmDepts,setDmDepts)} style={{
+                padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600,
+                border:`2px solid ${dmDepts[d.id]?P.acc:P.gryL}`,
+                background:dmDepts[d.id]?P.accDim:P.wh,
+                color:dmDepts[d.id]?P.acc:P.gryD,
+              }}>{d.icon} {d.name} {dmDepts[d.id]?"✓":""}</button>
+            ))}
           </div>
-          <div style={{marginBottom:20}}>
-            <h4 style={{color:P.navy,margin:"0 0 8px"}}>👤 Staff Accounts</h4>
-            <p style={{fontSize:12,color:P.gry,margin:"0 0 8px"}}>Staff with email → password reset via email. Without email → manual password reset by manager.</p>
-            <div style={{display:"grid",gap:4,maxHeight:400,overflowY:"auto"}}>
-              {h.staff.map(s=> <div key={s.id} style={{...S.profRow,padding:"8px 12px"}}>
-                <span style={{fontSize:13}}><strong>{s.name}</strong> {s.email?<span style={{color:P.blu,fontSize:11}}>({s.email})</span>:<span style={{color:P.gry,fontSize:11}}>(no email)</span>}</span>
-                <div style={{display:"flex",gap:4}}>
-                  {s.email&&<button style={{...S.addBtn,background:P.bluL,color:P.blu,fontSize:10,padding:"3px 8px"}} onClick={async()=>{const r=await authSendReset(s.email);alert(r.ok?"Reset email sent to "+s.email:"Error: "+r.code);}}>Email Reset</button>}
-                  <button style={{...S.addBtn,background:P.orgL,color:P.org,fontSize:10,padding:"3px 8px"}} onClick={()=>{const np=prompt("New password for "+s.name+":");if(!np)return;upH("staff",h.staff.map(x=>x.id===s.id?{...x,password:np}:x));alert("Password updated for "+s.name);}}>Set Password</button>
-                </div>
-              </div>)}
-            </div>
-          </div>
-          <div>
-            <h4 style={{color:P.navy,margin:"0 0 8px"}}>🔗 Shared Staff Login (legacy)</h4>
-            <div style={S.profRow}><span style={S.profL}>Username</span><span>{h.staffLogin?.username||"—"}</span></div>
-            <div style={S.profRow}><span style={S.profL}>Password</span><span>{h.staffLogin?.password||"—"}</span></div>
-            <button style={{...S.addBtn,marginTop:8}} onClick={()=>{const u=prompt("Staff username:",h.staffLogin?.username||"staff");const p=prompt("Staff password:",h.staffLogin?.password||"");if(u&&p)upH("staffLogin",{username:u,password:p});}}>Edit Shared Login</button>
+          <div style={{display:"flex",gap:8}}>
+            <button style={{...S.addBtn,opacity:saving?.5:1}} onClick={saveDeptManager} disabled={saving}>{saving?"Creating...":"Create Manager"}</button>
+            <button style={{...S.addBtn,background:P.gryL,color:P.gryD}} onClick={()=>{setAddDM(false);setMsg("");}}>Cancel</button>
           </div>
         </div>}
-      </main>
+
+        {/* List */}
+        {!(h.deptManagers||[]).length&&!addDM&&<p style={{color:P.gry,fontSize:13}}>No department managers yet.</p>}
+        <div style={{display:"grid",gap:8}}>
+          {(h.deptManagers||[]).map(dm=> {
+            const isEditing=editDM===dm.id;
+            const deptNames=(dm.deptIds||[]).map(did=>h.departments.find(d=>d.id===did)).filter(Boolean);
+            return (
+              <div key={dm.id} style={{padding:14,borderRadius:10,border:`1px solid ${P.gryL}`,background:P.bg}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,flexWrap:"wrap"}}>
+                  <div>
+                    <div style={{fontWeight:700,fontSize:14,color:P.navy}}>{dm.name}</div>
+                    <div style={{fontSize:12,color:P.gry,marginTop:2}}>{dm.email||"No email"}</div>
+                    <div style={{display:"flex",gap:4,marginTop:6,flexWrap:"wrap"}}>
+                      {deptNames.map(d=> <Badge key={d.id} color={P.acc} bg={P.accDim}>{d.icon} {d.name}</Badge>)}
+                      {!deptNames.length&&<Badge color={P.org} bg={P.orgL}>No departments assigned</Badge>}
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                    <button style={{...S.addBtn,background:P.purL,color:P.pur,fontSize:11}} onClick={()=>{if(isEditing){setEditDM(null);}else{setEditDM(dm.id);const obj={};(dm.deptIds||[]).forEach(id=>{obj[id]=true;});setEditDepts(obj);}}}>
+                      {isEditing?"Cancel":"Edit Depts"}
+                    </button>
+                    {dm.email&&<button style={{...S.addBtn,background:P.bluL,color:P.blu,fontSize:11}} onClick={async()=>{const r=await authSendReset(dm.email);alert(r.ok?"Reset email sent!":"Error: "+r.code);}}>📧 Reset</button>}
+                    <button style={{...S.addBtn,background:P.orgL,color:P.org,fontSize:11}} onClick={()=>{const np=prompt("New password for "+dm.name+":");if(np)upH("deptManagers",(h.deptManagers||[]).map(x=>x.id===dm.id?{...x,password:np}:x));}}>Set Password</button>
+                    <button style={S.delBtn} onClick={()=>upH("deptManagers",(h.deptManagers||[]).filter(x=>x.id!==dm.id))}>✕</button>
+                  </div>
+                </div>
+                {/* Edit departments */}
+                {isEditing&&<div style={{marginTop:12,padding:12,background:P.wh,borderRadius:8,border:`1px solid ${P.gryL}`}}>
+                  <p style={{fontSize:12,fontWeight:700,color:P.navy,margin:"0 0 8px"}}>Select departments for {dm.name}:</p>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>
+                    {(h.departments||[]).map(d=> (
+                      <button key={d.id} onClick={()=>toggleDept(d.id,editDepts,setEditDepts)} style={{
+                        padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600,
+                        border:`2px solid ${editDepts[d.id]?P.acc:P.gryL}`,background:editDepts[d.id]?P.accDim:P.wh,color:editDepts[d.id]?P.acc:P.gryD,
+                      }}>{d.icon} {d.name} {editDepts[d.id]?"✓":""}</button>
+                    ))}
+                  </div>
+                  <button style={S.addBtn} onClick={()=>updateDeptAssignment(dm.id)}>Save Departments</button>
+                </div>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Staff Accounts */}
+      <div style={{...S.card,marginBottom:16}}>
+        <h4 style={{color:P.navy,margin:"0 0 8px"}}>👤 Staff Accounts</h4>
+        <p style={{fontSize:12,color:P.gry,margin:"0 0 12px"}}>Staff with email can reset password via email. Without email, a manager can set a new password manually.</p>
+        <div style={{display:"grid",gap:4,maxHeight:400,overflowY:"auto"}}>
+          {h.staff.map(s=> <div key={s.id} style={{...S.profRow,padding:"8px 12px"}}>
+            <span style={{fontSize:13}}><strong>{s.name}</strong> {s.email?<span style={{color:P.blu,fontSize:11}}>({s.email})</span>:<span style={{color:P.gry,fontSize:11}}>(no email)</span>}</span>
+            <div style={{display:"flex",gap:4}}>
+              {s.email&&<button style={{...S.addBtn,background:P.bluL,color:P.blu,fontSize:10,padding:"3px 8px"}} onClick={async()=>{const r=await authSendReset(s.email);alert(r.ok?"Reset email sent to "+s.email:"Error: "+r.code);}}>📧 Reset</button>}
+              <button style={{...S.addBtn,background:P.orgL,color:P.org,fontSize:10,padding:"3px 8px"}} onClick={()=>{const np=prompt("New password for "+s.name+":");if(!np)return;upH("staff",h.staff.map(x=>x.id===s.id?{...x,password:np}:x));alert("Password updated");}}>Set Password</button>
+            </div>
+          </div>)}
+        </div>
+      </div>
+
+      {/* Shared Staff Login */}
+      <div style={S.card}>
+        <h4 style={{color:P.navy,margin:"0 0 8px"}}>🔗 Shared Staff Login</h4>
+        <p style={{fontSize:12,color:P.gry,margin:"0 0 8px"}}>Generic login for all staff. After login they pick their name.</p>
+        <div style={{display:"grid",gap:4}}>
+          <div style={S.profRow}><span style={S.profL}>Username</span><span style={{fontWeight:600}}>{h.staffLogin?.username||"—"}</span></div>
+          <div style={S.profRow}><span style={S.profL}>Password</span><span style={{fontWeight:600}}>{h.staffLogin?.password||"—"}</span></div>
+        </div>
+        <button style={{...S.addBtn,marginTop:8}} onClick={()=>{const u=prompt("Staff username:",h.staffLogin?.username||"staff");const p=prompt("Staff password:",h.staffLogin?.password||"");if(u&&p)upH("staffLogin",{username:u,password:p});}}>Edit Shared Login</button>
+      </div>
     </div>
   );
 }
